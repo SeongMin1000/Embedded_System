@@ -1,0 +1,91 @@
+# macOS 관련
+__MACOSX/
+._*
+
+# Keil MDK
+*.uvopt
+*.uvproj
+
+# IAR
+*.ewd
+*.ewp
+*.eww
+*.ewt
+*.dep
+
+# Eclipse/TrueSTUDIO
+.cproject
+.project
+.settings/
+*.launch
+
+# 빌드 결과물 및 임시 파일
+Debug/
+debug/
+*.o
+*.elf
+*.bin
+*.hex
+*.log
+*.log.lck
+*.tmp
+*~
+*.swp
+*.swo
+
+# 기타
+# 필요시 제외할 문서 파일
+# *.pdf
+
+# 빌드 결과물 무시
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
+*.out
+*.lst
+*.srec
+
+# IDE 관련 파일 무시 (TrueSTUDIO, Keil, IAR 등)
+.settings/
+.metadata/
+*.launch
+*.uvproj*
+*.uvopt*
+*.ewp
+*.eww
+*.ewd
+*.dep
+*.sdf
+*.db
+*.d
+*.log
+
+# 바이너리, 어셈블리 생성물
+*.axf
+*.exe
+*.a
+*.lib
+
+# 백업 및 임시 파일
+*~
+*.bak
+*.swp
+*.tmp
+
+# 특정 Toolchain 디렉토리 무시 (예: GNU, IAR, RealView 등)
+**/GNU/
+**/IAR/
+**/RealView/
+
+# 숨김 시스템 파일
+.DS_Store
+Thumbs.db
+
+# 기타 사용자 설정 저장 파일
+*.user
+*.cspy.bat
+*.cspy.ps1
+*.ewd
