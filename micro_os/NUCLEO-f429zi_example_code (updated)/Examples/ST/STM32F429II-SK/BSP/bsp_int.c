@@ -4,10 +4,10 @@
 *
 *                             (c) Copyright 2013; Micrium, Inc.; Weston, FL
 *
-*                   All rights reserved.  Protected by international copyright laws.
-*                   Knowledge of the source code may not be used to write a similar
-*                   product.  This file may only be used in accordance with a license
-*                   and should not be redistributed in any way.
+*                   All rights reserved.  Protected by international copyright
+*laws. Knowledge of the source code may not be used to write a similar product.
+*This file may only be used in accordance with a license and should not be
+*redistributed in any way.
 *********************************************************************************************************
 */
 
@@ -33,9 +33,12 @@
 *********************************************************************************************************
 */
 
-#define  BSP_INT_MODULE
+#define BSP_INT_MODULE
+#include <bsp.h>
 #include <includes.h>
+#include <stm32f4xx.h>
 
+extern volatile uint8_t alarm_flag;
 
 /*
 *********************************************************************************************************
@@ -43,8 +46,7 @@
 *********************************************************************************************************
 */
 
-#define  BSP_INT_SRC_NBR                                 91
-
+#define BSP_INT_SRC_NBR 91
 
 /*
 *********************************************************************************************************
@@ -52,13 +54,11 @@
 *********************************************************************************************************
 */
 
-
 /*
 *********************************************************************************************************
 *                                          LOCAL DATA TYPES
 *********************************************************************************************************
 */
-
 
 /*
 *********************************************************************************************************
@@ -66,8 +66,7 @@
 *********************************************************************************************************
 */
 
-static  CPU_FNCT_VOID  BSP_IntVectTbl[BSP_INT_SRC_NBR];
-
+static CPU_FNCT_VOID BSP_IntVectTbl[BSP_INT_SRC_NBR];
 
 /*
 *********************************************************************************************************
@@ -75,23 +74,20 @@ static  CPU_FNCT_VOID  BSP_IntVectTbl[BSP_INT_SRC_NBR];
 *********************************************************************************************************
 */
 
-
 /*
 *********************************************************************************************************
 *                                      LOCAL FUNCTION PROTOTYPES
 *********************************************************************************************************
 */
 
-static  void  BSP_IntHandler     (CPU_DATA  int_id);
-static  void  BSP_IntHandlerDummy(void);
-
+static void BSP_IntHandler(CPU_DATA int_id);
+static void BSP_IntHandlerDummy(void);
 
 /*
 *********************************************************************************************************
 *                                     LOCAL CONFIGURATION ERRORS
 *********************************************************************************************************
 */
-
 
 /*
 *********************************************************************************************************
@@ -105,15 +101,12 @@ static  void  BSP_IntHandlerDummy(void);
 *
 * Caller(s)   : Application.
 *
-* Note(s)     : (1) An interrupt does not need to be cleared within the interrupt controller.
+* Note(s)     : (1) An interrupt does not need to be cleared within the
+*interrupt controller.
 *********************************************************************************************************
 */
 
-void  BSP_IntClr (CPU_DATA  int_id)
-{
-
-}
-
+void BSP_IntClr(CPU_DATA int_id) {}
 
 /*
 *********************************************************************************************************
@@ -131,13 +124,13 @@ void  BSP_IntClr (CPU_DATA  int_id)
 *********************************************************************************************************
 */
 
-void  BSP_IntDis (CPU_DATA  int_id)
+void BSP_IntDis(CPU_DATA int_id)
 {
-    if (int_id < BSP_INT_SRC_NBR) {
-        CPU_IntSrcDis(int_id + 16);
-    }
+  if (int_id < BSP_INT_SRC_NBR)
+  {
+    CPU_IntSrcDis(int_id + 16);
+  }
 }
-
 
 /*
 *********************************************************************************************************
@@ -155,11 +148,7 @@ void  BSP_IntDis (CPU_DATA  int_id)
 *********************************************************************************************************
 */
 
-void  BSP_IntDisAll (void)
-{
-    CPU_IntDis();
-}
-
+void BSP_IntDisAll(void) { CPU_IntDis(); }
 
 /*
 *********************************************************************************************************
@@ -177,13 +166,13 @@ void  BSP_IntDisAll (void)
 *********************************************************************************************************
 */
 
-void  BSP_IntEn (CPU_DATA  int_id)
+void BSP_IntEn(CPU_DATA int_id)
 {
-    if (int_id < BSP_INT_SRC_NBR) {
-        CPU_IntSrcEn(int_id + 16);
-    }
+  if (int_id < BSP_INT_SRC_NBR)
+  {
+    CPU_IntSrcEn(int_id + 16);
+  }
 }
-
 
 /*
 *********************************************************************************************************
@@ -203,19 +192,17 @@ void  BSP_IntEn (CPU_DATA  int_id)
 *********************************************************************************************************
 */
 
-void  BSP_IntVectSet (CPU_DATA       int_id,
-                      CPU_FNCT_VOID  isr)
+void BSP_IntVectSet(CPU_DATA int_id, CPU_FNCT_VOID isr)
 {
-    CPU_SR_ALLOC();
+  CPU_SR_ALLOC();
 
-
-    if (int_id < BSP_INT_SRC_NBR) {
-        CPU_CRITICAL_ENTER();
-        BSP_IntVectTbl[int_id] = isr;
-        CPU_CRITICAL_EXIT();
-    }
+  if (int_id < BSP_INT_SRC_NBR)
+  {
+    CPU_CRITICAL_ENTER();
+    BSP_IntVectTbl[int_id] = isr;
+    CPU_CRITICAL_EXIT();
+  }
 }
-
 
 /*
 *********************************************************************************************************
@@ -235,19 +222,17 @@ void  BSP_IntVectSet (CPU_DATA       int_id,
 *********************************************************************************************************
 */
 
-void  BSP_IntPrioSet (CPU_DATA    int_id,
-                      CPU_INT08U  prio)
+void BSP_IntPrioSet(CPU_DATA int_id, CPU_INT08U prio)
 {
-    CPU_SR_ALLOC();
+  CPU_SR_ALLOC();
 
-
-    if (int_id < BSP_INT_SRC_NBR) {
-        CPU_CRITICAL_ENTER();
-        CPU_IntSrcPrioSet(int_id + 16, prio);
-        CPU_CRITICAL_EXIT();
-    }
+  if (int_id < BSP_INT_SRC_NBR)
+  {
+    CPU_CRITICAL_ENTER();
+    CPU_IntSrcPrioSet(int_id + 16, prio);
+    CPU_CRITICAL_EXIT();
+  }
 }
-
 
 /*
 *********************************************************************************************************
@@ -273,16 +258,15 @@ void  BSP_IntPrioSet (CPU_DATA    int_id,
 *********************************************************************************************************
 */
 
-void  BSP_IntInit (void)
+void BSP_IntInit(void)
 {
-    CPU_DATA  int_id;
+  CPU_DATA int_id;
 
-
-    for (int_id = 0; int_id < BSP_INT_SRC_NBR; int_id++) {
-        BSP_IntVectSet(int_id, BSP_IntHandlerDummy);
-    }
+  for (int_id = 0; int_id < BSP_INT_SRC_NBR; int_id++)
+  {
+    BSP_IntVectSet(int_id, BSP_IntHandlerDummy);
+  }
 }
-
 
 /*
 *********************************************************************************************************
@@ -300,98 +284,124 @@ void  BSP_IntInit (void)
 *********************************************************************************************************
 */
 
-void  BSP_IntHandlerWWDG               (void)  { BSP_IntHandler(BSP_INT_ID_WWDG);                }
-void  BSP_IntHandlerPVD                (void)  { BSP_IntHandler(BSP_INT_ID_PVD);                 }
-void  BSP_IntHandlerTAMP_STAMP         (void)  { BSP_IntHandler(BSP_INT_ID_TAMP_STAMP);          }
-void  BSP_IntHandlerRTC_WKUP           (void)  { BSP_IntHandler(BSP_INT_ID_RTC_WKUP);            }
-void  BSP_IntHandlerFLASH              (void)  { BSP_IntHandler(BSP_INT_ID_FLASH);               }
-void  BSP_IntHandlerRCC                (void)  { BSP_IntHandler(BSP_INT_ID_RCC);                 }
-void  BSP_IntHandlerEXTI0              (void)  { BSP_IntHandler(BSP_INT_ID_EXTI0);               }
-void  BSP_IntHandlerEXTI1              (void)  { BSP_IntHandler(BSP_INT_ID_EXTI1);               }
-void  BSP_IntHandlerEXTI2              (void)  { BSP_IntHandler(BSP_INT_ID_EXTI2);               }
-void  BSP_IntHandlerEXTI3              (void)  { BSP_IntHandler(BSP_INT_ID_EXTI3);               }
-void  BSP_IntHandlerEXTI4              (void)  { BSP_IntHandler(BSP_INT_ID_EXTI4);               }
-void  BSP_IntHandlerDMA1_CH0           (void)  { BSP_IntHandler(BSP_INT_ID_DMA1_CH0);            }
-void  BSP_IntHandlerDMA1_CH1           (void)  { BSP_IntHandler(BSP_INT_ID_DMA1_CH1);            }
-void  BSP_IntHandlerDMA1_CH2           (void)  { BSP_IntHandler(BSP_INT_ID_DMA1_CH2);            }
-void  BSP_IntHandlerDMA1_CH3           (void)  { BSP_IntHandler(BSP_INT_ID_DMA1_CH3);            }
-void  BSP_IntHandlerDMA1_CH4           (void)  { BSP_IntHandler(BSP_INT_ID_DMA1_CH4);            }
-void  BSP_IntHandlerDMA1_CH5           (void)  { BSP_IntHandler(BSP_INT_ID_DMA1_CH5);            }
-void  BSP_IntHandlerDMA1_CH6           (void)  { BSP_IntHandler(BSP_INT_ID_DMA1_CH6);            }
-void  BSP_IntHandlerADC                (void)  { BSP_IntHandler(BSP_INT_ID_ADC);                 }
-void  BSP_IntHandlerCAN1_TX            (void)  { BSP_IntHandler(BSP_INT_ID_CAN1_TX);             }
-void  BSP_IntHandlerCAN1_RX0           (void)  { BSP_IntHandler(BSP_INT_ID_CAN1_RX0);            }
-void  BSP_IntHandlerCAN1_RX1           (void)  { BSP_IntHandler(BSP_INT_ID_CAN1_RX1);            }
-void  BSP_IntHandlerCAN1_SCE           (void)  { BSP_IntHandler(BSP_INT_ID_CAN1_SCE);            }
-void  BSP_IntHandlerEXTI9_5            (void)  { BSP_IntHandler(BSP_INT_ID_EXTI9_5);             }
-void  BSP_IntHandlerTIM1_BRK_TIM9      (void)  { BSP_IntHandler(BSP_INT_ID_TIM1_BRK_TIM9);       }
-void  BSP_IntHandlerTIM1_UP_TIM10      (void)  { BSP_IntHandler(BSP_INT_ID_TIM1_UP_TIM10);       }
-void  BSP_IntHandlerTIM1_TRG_COM_TIM11 (void)  { BSP_IntHandler(BSP_INT_ID_TIM1_TRG_COM_TIM11);  }
-void  BSP_IntHandlerTIM1_CC            (void)  { BSP_IntHandler(BSP_INT_ID_TIM1_CC);             }
-void  BSP_IntHandlerTIM2               (void)  { BSP_IntHandler(BSP_INT_ID_TIM2);                }
-void  BSP_IntHandlerTIM3               (void)  { BSP_IntHandler(BSP_INT_ID_TIM3);                }
-void  BSP_IntHandlerTIM4               (void)  { BSP_IntHandler(BSP_INT_ID_TIM4);                }
-void  BSP_IntHandlerI2C1_EV            (void)  { BSP_IntHandler(BSP_INT_ID_I2C1_EV);             }
-void  BSP_IntHandlerI2C1_ER            (void)  { BSP_IntHandler(BSP_INT_ID_I2C1_ER);             }
-void  BSP_IntHandlerI2C2_EV            (void)  { BSP_IntHandler(BSP_INT_ID_I2C2_EV);             }
-void  BSP_IntHandlerI2C2_ER            (void)  { BSP_IntHandler(BSP_INT_ID_I2C2_ER);             }
-void  BSP_IntHandlerSPI1               (void)  { BSP_IntHandler(BSP_INT_ID_SPI1);                }
-void  BSP_IntHandlerSPI2               (void)  { BSP_IntHandler(BSP_INT_ID_SPI2);                }
-void  BSP_IntHandlerUSART1             (void)  { BSP_IntHandler(BSP_INT_ID_USART1);              }
-void  BSP_IntHandlerUSART2             (void)  { BSP_IntHandler(BSP_INT_ID_USART2);              }
-void  BSP_IntHandlerUSART3             (void)  { BSP_IntHandler(BSP_INT_ID_USART3);              }
-void  BSP_IntHandlerEXTI15_10          (void)  { BSP_IntHandler(BSP_INT_ID_EXTI15_10);           }
-void  BSP_IntHandlerRTCAlarm           (void)  { BSP_IntHandler(BSP_INT_ID_RTC_ALARM);           }
-void  BSP_IntHandlerOTG_FS_WKUP        (void)  { BSP_IntHandler(BSP_INT_ID_OTG_FS_WKUP);         }
-void  BSP_IntHandlerTIM8_BRK_TIM12     (void)  { BSP_IntHandler(BSP_INT_ID_TIM8_BRK_TIM12);      }
-void  BSP_IntHandlerTIM8_UP_TIM13      (void)  { BSP_IntHandler(BSP_INT_ID_TIM8_UP_TIM13);       }
-void  BSP_IntHandlerTIM8_TRG_COM_TIM14 (void)  { BSP_IntHandler(BSP_INT_ID_TIM8_TRG_COM_TIM14);  }
-void  BSP_IntHandlerTIM8_CC            (void)  { BSP_IntHandler(BSP_INT_ID_TIM8_CC);             }
-void  BSP_IntHandlerDMA1_STREAM7       (void)  { BSP_IntHandler(BSP_INT_ID_DMA1_STREAM7);        }
-void  BSP_IntHandlerFSMC               (void)  { BSP_IntHandler(BSP_INT_ID_FSMC);                }
-void  BSP_IntHandlerSDIO               (void)  { BSP_IntHandler(BSP_INT_ID_SDIO);                }
-void  BSP_IntHandlerTIM5               (void)  { BSP_IntHandler(BSP_INT_ID_TIM5);                }
-void  BSP_IntHandlerSPI3               (void)  { BSP_IntHandler(BSP_INT_ID_SPI3);                }
-void  BSP_IntHandlerUSART4             (void)  { BSP_IntHandler(BSP_INT_ID_USART4);              }
-void  BSP_IntHandlerUSART5             (void)  { BSP_IntHandler(BSP_INT_ID_USART5);              }
-void  BSP_IntHandlerTIM6_DAC           (void)  { BSP_IntHandler(BSP_INT_ID_TIM6_DAC);            }
-void  BSP_IntHandlerTIM7               (void)  { BSP_IntHandler(BSP_INT_ID_TIM7);                }
-void  BSP_IntHandlerDMA2_CH0           (void)  { BSP_IntHandler(BSP_INT_ID_DMA2_CH0);            }
-void  BSP_IntHandlerDMA2_CH1           (void)  { BSP_IntHandler(BSP_INT_ID_DMA2_CH1);            }
-void  BSP_IntHandlerDMA2_CH2           (void)  { BSP_IntHandler(BSP_INT_ID_DMA2_CH2);            }
-void  BSP_IntHandlerDMA2_CH3           (void)  { BSP_IntHandler(BSP_INT_ID_DMA2_CH3);            }
-void  BSP_IntHandlerDMA2_CH4           (void)  { BSP_IntHandler(BSP_INT_ID_DMA2_CH4);            }
-void  BSP_IntHandlerETH                (void)  { BSP_IntHandler(BSP_INT_ID_ETH);                 }
-void  BSP_IntHandlerETHWakeup          (void)  { BSP_IntHandler(BSP_INT_ID_ETH_WKUP);            }
-void  BSP_IntHandlerCAN2_TX            (void)  { BSP_IntHandler(BSP_INT_ID_CAN2_TX);             }
-void  BSP_IntHandlerCAN2_RX0           (void)  { BSP_IntHandler(BSP_INT_ID_CAN2_RX0);            }
-void  BSP_IntHandlerCAN2_RX1           (void)  { BSP_IntHandler(BSP_INT_ID_CAN2_RX1);            }
-void  BSP_IntHandlerCAN2_SCE           (void)  { BSP_IntHandler(BSP_INT_ID_CAN2_SCE);            }
-void  BSP_IntHandlerOTG_FS             (void)  { BSP_IntHandler(BSP_INT_ID_OTG_FS);              }
-void  BSP_IntHandlerDMA2_CH5           (void)  { BSP_IntHandler(BSP_INT_ID_DMA2_CH5);            }
-void  BSP_IntHandlerDMA2_CH6           (void)  { BSP_IntHandler(BSP_INT_ID_DMA2_CH6);            }
-void  BSP_IntHandlerDMA2_CH7           (void)  { BSP_IntHandler(BSP_INT_ID_DMA2_CH7);            }
-void  BSP_IntHandlerUSART6             (void)  { BSP_IntHandler(BSP_INT_ID_USART6);              }
-void  BSP_IntHandlerI2C3_EV            (void)  { BSP_IntHandler(BSP_INT_ID_I2C3_EV);             }
-void  BSP_IntHandlerI2C3_ER            (void)  { BSP_IntHandler(BSP_INT_ID_I2C3_ER);             }
-void  BSP_IntHandlerOTG_HS_EP1_OUT     (void)  { BSP_IntHandler(BSP_INT_ID_OTG_HS_EP1_OUT);      }
-void  BSP_IntHandlerOTG_HS_EP1_IN      (void)  { BSP_IntHandler(BSP_INT_ID_OTG_HS_EP1_IN);       }
-void  BSP_IntHandlerOTG_HS_WKUP        (void)  { BSP_IntHandler(BSP_INT_ID_OTG_HS_WKUP);         }
-void  BSP_IntHandlerOTG_HS             (void)  { BSP_IntHandler(BSP_INT_ID_OTG_HS);              }
-void  BSP_IntHandlerDCMI               (void)  { BSP_IntHandler(BSP_INT_ID_DCMI);                }
-void  BSP_IntHandlerCRYP               (void)  { BSP_IntHandler(BSP_INT_ID_CRYP);                }
-void  BSP_IntHandlerHASH_RNG           (void)  { BSP_IntHandler(BSP_INT_ID_HASH_RNG);            }
-void  BSP_IntHandlerFPU                (void)  { BSP_IntHandler(BSP_INT_ID_FPU);                 }
-void  BSP_IntHandlerUART7              (void)  { BSP_IntHandler(BSP_INT_ID_UART7);               }
-void  BSP_IntHandlerUART8              (void)  { BSP_IntHandler(BSP_INT_ID_UART8);               }
-void  BSP_IntHandlerSPI4               (void)  { BSP_IntHandler(BSP_INT_ID_SPI4);                }
-void  BSP_IntHandlerSPI5               (void)  { BSP_IntHandler(BSP_INT_ID_SPI5);                }
-void  BSP_IntHandlerSPI6               (void)  { BSP_IntHandler(BSP_INT_ID_SPI6);                }
-void  BSP_IntHandlerSAI1               (void)  { BSP_IntHandler(BSP_INT_ID_SAI1);                }
-void  BSP_IntHandlerLTDC               (void)  { BSP_IntHandler(BSP_INT_ID_LTDC);                }
-void  BSP_IntHandlerLTDC_ER            (void)  { BSP_IntHandler(BSP_INT_ID_LTDC_ER);             }
-void  BSP_IntHandlerDMA2D              (void)  { BSP_IntHandler(BSP_INT_ID_DMA2D);               }
-
+void BSP_IntHandlerWWDG(void) { BSP_IntHandler(BSP_INT_ID_WWDG); }
+void BSP_IntHandlerPVD(void) { BSP_IntHandler(BSP_INT_ID_PVD); }
+void BSP_IntHandlerTAMP_STAMP(void) { BSP_IntHandler(BSP_INT_ID_TAMP_STAMP); }
+void BSP_IntHandlerRTC_WKUP(void) { BSP_IntHandler(BSP_INT_ID_RTC_WKUP); }
+void BSP_IntHandlerFLASH(void) { BSP_IntHandler(BSP_INT_ID_FLASH); }
+void BSP_IntHandlerRCC(void) { BSP_IntHandler(BSP_INT_ID_RCC); }
+void BSP_IntHandlerEXTI0(void) { BSP_IntHandler(BSP_INT_ID_EXTI0); }
+void BSP_IntHandlerEXTI1(void) { BSP_IntHandler(BSP_INT_ID_EXTI1); }
+void BSP_IntHandlerEXTI2(void) { BSP_IntHandler(BSP_INT_ID_EXTI2); }
+void BSP_IntHandlerEXTI3(void) { BSP_IntHandler(BSP_INT_ID_EXTI3); }
+void BSP_IntHandlerEXTI4(void) { BSP_IntHandler(BSP_INT_ID_EXTI4); }
+void BSP_IntHandlerDMA1_CH0(void) { BSP_IntHandler(BSP_INT_ID_DMA1_CH0); }
+void BSP_IntHandlerDMA1_CH1(void) { BSP_IntHandler(BSP_INT_ID_DMA1_CH1); }
+void BSP_IntHandlerDMA1_CH2(void) { BSP_IntHandler(BSP_INT_ID_DMA1_CH2); }
+void BSP_IntHandlerDMA1_CH3(void) { BSP_IntHandler(BSP_INT_ID_DMA1_CH3); }
+void BSP_IntHandlerDMA1_CH4(void) { BSP_IntHandler(BSP_INT_ID_DMA1_CH4); }
+void BSP_IntHandlerDMA1_CH5(void) { BSP_IntHandler(BSP_INT_ID_DMA1_CH5); }
+void BSP_IntHandlerDMA1_CH6(void) { BSP_IntHandler(BSP_INT_ID_DMA1_CH6); }
+void BSP_IntHandlerADC(void) { BSP_IntHandler(BSP_INT_ID_ADC); }
+void BSP_IntHandlerCAN1_TX(void) { BSP_IntHandler(BSP_INT_ID_CAN1_TX); }
+void BSP_IntHandlerCAN1_RX0(void) { BSP_IntHandler(BSP_INT_ID_CAN1_RX0); }
+void BSP_IntHandlerCAN1_RX1(void) { BSP_IntHandler(BSP_INT_ID_CAN1_RX1); }
+void BSP_IntHandlerCAN1_SCE(void) { BSP_IntHandler(BSP_INT_ID_CAN1_SCE); }
+void BSP_IntHandlerEXTI9_5(void) { BSP_IntHandler(BSP_INT_ID_EXTI9_5); }
+void BSP_IntHandlerTIM1_BRK_TIM9(void)
+{
+  BSP_IntHandler(BSP_INT_ID_TIM1_BRK_TIM9);
+}
+void BSP_IntHandlerTIM1_UP_TIM10(void)
+{
+  BSP_IntHandler(BSP_INT_ID_TIM1_UP_TIM10);
+}
+void BSP_IntHandlerTIM1_TRG_COM_TIM11(void)
+{
+  BSP_IntHandler(BSP_INT_ID_TIM1_TRG_COM_TIM11);
+}
+void BSP_IntHandlerTIM1_CC(void) { BSP_IntHandler(BSP_INT_ID_TIM1_CC); }
+void BSP_IntHandlerTIM2(void) { BSP_IntHandler(BSP_INT_ID_TIM2); }
+void BSP_IntHandlerTIM3(void) { BSP_IntHandler(BSP_INT_ID_TIM3); }
+void BSP_IntHandlerTIM4(void) { BSP_IntHandler(BSP_INT_ID_TIM4); }
+void BSP_IntHandlerI2C1_EV(void) { BSP_IntHandler(BSP_INT_ID_I2C1_EV); }
+void BSP_IntHandlerI2C1_ER(void) { BSP_IntHandler(BSP_INT_ID_I2C1_ER); }
+void BSP_IntHandlerI2C2_EV(void) { BSP_IntHandler(BSP_INT_ID_I2C2_EV); }
+void BSP_IntHandlerI2C2_ER(void) { BSP_IntHandler(BSP_INT_ID_I2C2_ER); }
+void BSP_IntHandlerSPI1(void) { BSP_IntHandler(BSP_INT_ID_SPI1); }
+void BSP_IntHandlerSPI2(void) { BSP_IntHandler(BSP_INT_ID_SPI2); }
+void BSP_IntHandlerUSART1(void) { BSP_IntHandler(BSP_INT_ID_USART1); }
+void BSP_IntHandlerUSART2(void) { BSP_IntHandler(BSP_INT_ID_USART2); }
+void BSP_IntHandlerUSART3(void) { BSP_IntHandler(BSP_INT_ID_USART3); }
+void BSP_IntHandlerEXTI15_10(void) { BSP_IntHandler(BSP_INT_ID_EXTI15_10); }
+// void BSP_IntHandlerRTCAlarm(void) { BSP_IntHandler(BSP_INT_ID_RTC_ALARM); }
+void BSP_IntHandlerOTG_FS_WKUP(void) { BSP_IntHandler(BSP_INT_ID_OTG_FS_WKUP); }
+void BSP_IntHandlerTIM8_BRK_TIM12(void)
+{
+  BSP_IntHandler(BSP_INT_ID_TIM8_BRK_TIM12);
+}
+void BSP_IntHandlerTIM8_UP_TIM13(void)
+{
+  BSP_IntHandler(BSP_INT_ID_TIM8_UP_TIM13);
+}
+void BSP_IntHandlerTIM8_TRG_COM_TIM14(void)
+{
+  BSP_IntHandler(BSP_INT_ID_TIM8_TRG_COM_TIM14);
+}
+void BSP_IntHandlerTIM8_CC(void) { BSP_IntHandler(BSP_INT_ID_TIM8_CC); }
+void BSP_IntHandlerDMA1_STREAM7(void)
+{
+  BSP_IntHandler(BSP_INT_ID_DMA1_STREAM7);
+}
+void BSP_IntHandlerFSMC(void) { BSP_IntHandler(BSP_INT_ID_FSMC); }
+void BSP_IntHandlerSDIO(void) { BSP_IntHandler(BSP_INT_ID_SDIO); }
+void BSP_IntHandlerTIM5(void) { BSP_IntHandler(BSP_INT_ID_TIM5); }
+void BSP_IntHandlerSPI3(void) { BSP_IntHandler(BSP_INT_ID_SPI3); }
+void BSP_IntHandlerUSART4(void) { BSP_IntHandler(BSP_INT_ID_USART4); }
+void BSP_IntHandlerUSART5(void) { BSP_IntHandler(BSP_INT_ID_USART5); }
+void BSP_IntHandlerTIM6_DAC(void) { BSP_IntHandler(BSP_INT_ID_TIM6_DAC); }
+void BSP_IntHandlerTIM7(void) { BSP_IntHandler(BSP_INT_ID_TIM7); }
+void BSP_IntHandlerDMA2_CH0(void) { BSP_IntHandler(BSP_INT_ID_DMA2_CH0); }
+void BSP_IntHandlerDMA2_CH1(void) { BSP_IntHandler(BSP_INT_ID_DMA2_CH1); }
+void BSP_IntHandlerDMA2_CH2(void) { BSP_IntHandler(BSP_INT_ID_DMA2_CH2); }
+void BSP_IntHandlerDMA2_CH3(void) { BSP_IntHandler(BSP_INT_ID_DMA2_CH3); }
+void BSP_IntHandlerDMA2_CH4(void) { BSP_IntHandler(BSP_INT_ID_DMA2_CH4); }
+void BSP_IntHandlerETH(void) { BSP_IntHandler(BSP_INT_ID_ETH); }
+void BSP_IntHandlerETHWakeup(void) { BSP_IntHandler(BSP_INT_ID_ETH_WKUP); }
+void BSP_IntHandlerCAN2_TX(void) { BSP_IntHandler(BSP_INT_ID_CAN2_TX); }
+void BSP_IntHandlerCAN2_RX0(void) { BSP_IntHandler(BSP_INT_ID_CAN2_RX0); }
+void BSP_IntHandlerCAN2_RX1(void) { BSP_IntHandler(BSP_INT_ID_CAN2_RX1); }
+void BSP_IntHandlerCAN2_SCE(void) { BSP_IntHandler(BSP_INT_ID_CAN2_SCE); }
+void BSP_IntHandlerOTG_FS(void) { BSP_IntHandler(BSP_INT_ID_OTG_FS); }
+void BSP_IntHandlerDMA2_CH5(void) { BSP_IntHandler(BSP_INT_ID_DMA2_CH5); }
+void BSP_IntHandlerDMA2_CH6(void) { BSP_IntHandler(BSP_INT_ID_DMA2_CH6); }
+void BSP_IntHandlerDMA2_CH7(void) { BSP_IntHandler(BSP_INT_ID_DMA2_CH7); }
+void BSP_IntHandlerUSART6(void) { BSP_IntHandler(BSP_INT_ID_USART6); }
+void BSP_IntHandlerI2C3_EV(void) { BSP_IntHandler(BSP_INT_ID_I2C3_EV); }
+void BSP_IntHandlerI2C3_ER(void) { BSP_IntHandler(BSP_INT_ID_I2C3_ER); }
+void BSP_IntHandlerOTG_HS_EP1_OUT(void)
+{
+  BSP_IntHandler(BSP_INT_ID_OTG_HS_EP1_OUT);
+}
+void BSP_IntHandlerOTG_HS_EP1_IN(void)
+{
+  BSP_IntHandler(BSP_INT_ID_OTG_HS_EP1_IN);
+}
+void BSP_IntHandlerOTG_HS_WKUP(void) { BSP_IntHandler(BSP_INT_ID_OTG_HS_WKUP); }
+void BSP_IntHandlerOTG_HS(void) { BSP_IntHandler(BSP_INT_ID_OTG_HS); }
+void BSP_IntHandlerDCMI(void) { BSP_IntHandler(BSP_INT_ID_DCMI); }
+void BSP_IntHandlerCRYP(void) { BSP_IntHandler(BSP_INT_ID_CRYP); }
+void BSP_IntHandlerHASH_RNG(void) { BSP_IntHandler(BSP_INT_ID_HASH_RNG); }
+void BSP_IntHandlerFPU(void) { BSP_IntHandler(BSP_INT_ID_FPU); }
+void BSP_IntHandlerUART7(void) { BSP_IntHandler(BSP_INT_ID_UART7); }
+void BSP_IntHandlerUART8(void) { BSP_IntHandler(BSP_INT_ID_UART8); }
+void BSP_IntHandlerSPI4(void) { BSP_IntHandler(BSP_INT_ID_SPI4); }
+void BSP_IntHandlerSPI5(void) { BSP_IntHandler(BSP_INT_ID_SPI5); }
+void BSP_IntHandlerSPI6(void) { BSP_IntHandler(BSP_INT_ID_SPI6); }
+void BSP_IntHandlerSAI1(void) { BSP_IntHandler(BSP_INT_ID_SAI1); }
+void BSP_IntHandlerLTDC(void) { BSP_IntHandler(BSP_INT_ID_LTDC); }
+void BSP_IntHandlerLTDC_ER(void) { BSP_IntHandler(BSP_INT_ID_LTDC_ER); }
+void BSP_IntHandlerDMA2D(void) { BSP_IntHandler(BSP_INT_ID_DMA2D); }
 
 /*
 *********************************************************************************************************
@@ -417,28 +427,28 @@ void  BSP_IntHandlerDMA2D              (void)  { BSP_IntHandler(BSP_INT_ID_DMA2D
 *********************************************************************************************************
 */
 
-static  void  BSP_IntHandler (CPU_DATA  int_id)
+static void BSP_IntHandler(CPU_DATA int_id)
 {
-    CPU_FNCT_VOID  isr;
-    CPU_SR_ALLOC();
+  CPU_FNCT_VOID isr;
+  CPU_SR_ALLOC();
 
+  CPU_CRITICAL_ENTER(); /* Tell the OS that we are starting an ISR            */
 
-    CPU_CRITICAL_ENTER();                                       /* Tell the OS that we are starting an ISR            */
+  OSIntEnter();
 
-    OSIntEnter();
+  CPU_CRITICAL_EXIT();
 
-    CPU_CRITICAL_EXIT();
-
-    if (int_id < BSP_INT_SRC_NBR) {
-        isr = BSP_IntVectTbl[int_id];
-        if (isr != (CPU_FNCT_VOID)0) {
-            isr();
-        }
+  if (int_id < BSP_INT_SRC_NBR)
+  {
+    isr = BSP_IntVectTbl[int_id];
+    if (isr != (CPU_FNCT_VOID)0)
+    {
+      isr();
     }
+  }
 
-    OSIntExit();                                                /* Tell the OS that we are leaving the ISR            */
+  OSIntExit(); /* Tell the OS that we are leaving the ISR            */
 }
-
 
 /*
 *********************************************************************************************************
@@ -456,7 +466,32 @@ static  void  BSP_IntHandler (CPU_DATA  int_id)
 *********************************************************************************************************
 */
 
-static  void  BSP_IntHandlerDummy (void)
-{
+static void BSP_IntHandlerDummy(void) {}
 
+/*
+*********************************************************************************************************
+*                                     BSP_IntHandlerRTCAlarm()
+*
+* Description : Handle the RTC Alarm interrupt.
+*
+* Argument(s) : none.
+*
+* Return(s)   : none.
+*
+* Caller(s)   : This is an ISR.
+*
+* Note(s)     : none.
+*********************************************************************************************************
+*/
+
+// rtc alarm handler 재정의
+// 세팅 시간에 이르면 alaram_flag 1로 설정
+void BSP_IntHandlerRTCAlarm(void)
+{
+  if (RTC_GetITStatus(RTC_IT_ALRA) != RESET)
+  {
+    RTC_ClearITPendingBit(RTC_IT_ALRA);
+    EXTI_ClearITPendingBit(EXTI_Line17);
+    alarm_flag = 1;
+  }
 }
