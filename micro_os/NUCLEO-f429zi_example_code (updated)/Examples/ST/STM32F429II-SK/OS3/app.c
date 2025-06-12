@@ -19,7 +19,7 @@ typedef enum
 } COM_TypeDef;
 
 // ---- 함수 선언 ----
-// (1) HW 초기화
+// (1)  USART 초기화
 static void STM_Nucleo_COMInit(COM_TypeDef com, const USART_InitTypeDef *cfg);
 static void USART_Config(void);
 
@@ -36,6 +36,9 @@ static void send_string(const char *s);
 // (4) Task 함수
 static void TaskStart(void *p_arg);
 static void TaskUsart(void *p_arg);
+
+// (5) 터치 감지 센서 초기화
+static void TouchSensor_GPIO_Init(void);
 
 #define NUCLEO_COM1 USART3
 #define NUCLEO_COM1_CLK RCC_APB1Periph_USART3
@@ -89,7 +92,7 @@ int main(void)
     ; // OSStart() 호출 후 대기 중 오류 발생 시 이 부분 실행
 }
 
-// ---- HW 초기화 ----
+// ---- USART 초기화 ----
 static void STM_Nucleo_COMInit(COM_TypeDef com, const USART_InitTypeDef *cfg)
 {
   if (com != COM1)
@@ -216,9 +219,12 @@ static void TaskStart(void *p_arg)
 {
   OS_ERR err;
   (void)p_arg;
-  BSP_Init();
-  BSP_Tick_Init();
-  USART_Config();
+
+  BSP_Init();         // 보드 기본 초기화
+  BSP_Tick_Init();    // 시스템 틱 초기화
+  USART_Config();     // USART 설정
+
+  TouchSensor_GPIO_Init();  // 터치 센서 GPIO 입력 핀 초기화
 
   while (DEF_TRUE)
   {
@@ -229,6 +235,14 @@ static void TaskStart(void *p_arg)
     if (alarm_flag)
     {
       send_string("\r\n!!! ALARM !!!\r\n");
+
+      // 터치 센서 동작 확인
+      if (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3)) {
+        send_string("터치 감지됨!\r\n");
+      } else {
+        send_string("터치 안 됨.\r\n");
+      }
+
       alarm_flag = 0;
     }
 
@@ -236,8 +250,19 @@ static void TaskStart(void *p_arg)
   }
 }
 
-// ---- USART Task ----
-static void TaskUsart(void *p_arg)
+// ---- 터치 센서 입력용 GPIO 설정 (PA3 / A0) ----
+static void TouchSensor_GPIO_Init(void)
 {
-  // ... existing code ...
+  GPIO_InitTypeDef GPIO_InitStruct;
+
+  // GPIOA 클럭 Enable
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+  // PA3 입력으로 설정 (풀다운 사용)
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_3;         // PA3 (A0)
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;      // 입력 모드
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_DOWN;    // 풀다운 설정
+
+  GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
+
