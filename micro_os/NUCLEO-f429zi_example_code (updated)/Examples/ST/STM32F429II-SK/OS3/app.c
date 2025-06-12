@@ -10,32 +10,25 @@
 #include "stm32f4xx_usart.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
+// Á¶ÀÌ½ºÆ½ ÇÉ Á¤ÀÇ (PA0, PA1, PC13 µî)
+#define JOYSTICK_X_PIN    GPIO_Pin_3 // PA0
+#define JOYSTICK_Y_PIN    GPIO_Pin_7 // PA7
+#define JOYSTICK_SW_PIN   GPIO_Pin_12 // PC13 (SW ¹öÆ°)
 
-// ---- íƒ€ìž…, ë³€ìˆ˜ ì„ ì–¸ ----
+// ----    ž…, ë³  ˆ˜  „  –¸ ----
 typedef enum
 {
   COM1 = 0,
   COMn
 } COM_TypeDef;
-
-// ---- í•¨ìˆ˜ ì„ ì–¸ ----
-// (1) HW ì´ˆê¸°í™”
+volatile uint8_t alarm_flag=0;
 static void STM_Nucleo_COMInit(COM_TypeDef com, const USART_InitTypeDef *cfg);
 static void USART_Config(void);
 
-// (2) RTC ì„¤ì •
-void RTC_Init_Config(void);
-void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
-void RTC_GetCurrentTimeString(char *buf, size_t len);
-void RTC_SetDailyAlarm(void);
-
-// (3) USART ì¶”ê°€
 static void send_char(uint8_t c);
 static void send_string(const char *s);
-
-// (4) Task í•¨ìˆ˜
-static void TaskStart(void *p_arg);
-static void TaskUsart(void *p_arg);
 
 #define NUCLEO_COM1 USART3
 #define NUCLEO_COM1_CLK RCC_APB1Periph_USART3
@@ -53,43 +46,11 @@ static void TaskUsart(void *p_arg);
 #define START_PRIO 2u
 #define START_STK_SIZE 512u
 
-// ---- ë³€ìˆ˜ ì„ ì–¸ ----
+// ---- ë³  ˆ˜  „  –¸ ----
 static OS_TCB TCB_Start;
 static CPU_STK STK_Start[START_STK_SIZE];
+// USART ÃÊ±âÈ­ ÇÔ¼ö
 
-char target_time[16] = {0};
-char current_time[16] = {0};
-char input_buffer[32];
-uint8_t input_index = 0;
-uint8_t is_target_set = 0;
-
-// bsp_int.cì—ì„œ ê³µìœ 
-volatile uint8_t alarm_flag = 0;
-
-// ---- ë©”ì¸ í•¨ìˆ˜ ----
-int main(void)
-{
-  OS_ERR err;
-  CPU_Init();
-  OSInit(&err);
-
-  RTC_Init_Config();            // RTC ì„¤ì •, LSI í™•ì¸ í›„ ì„¤ì • í›„
-  RTC_CustomSetTime(8, 59, 55); // í…ŒìŠ¤íŠ¸ìš© ì‹œê°„
-  RTC_SetDailyAlarm();          // ë§¤ì¼ 9ì‹œ ì•Œë¦¼
-
-  OSTaskCreate(&TCB_Start, "Start", TaskStart, 0, START_PRIO, &STK_Start[0],
-               START_STK_SIZE / 10, START_STK_SIZE, 0, 0, 0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR, &err);
-
-  RTC_AlarmCmd(RTC_Alarm_A, ENABLE); // ì•ŒëžŒ ë™ìž‘ ì‹œìž‘
-  NVIC_EnableIRQ(RTC_Alarm_IRQn);    // NVICì— ë“±ë¡
-
-  OSStart(&err);
-  while (1)
-    ; // OSStart() í˜¸ì¶œ í›„ ëŒ€ê¸° ì¤‘ ì˜¤ë¥˜ ë°œìƒ ì‹œ ì´ ë¶€ë¶„ ì‹¤í–‰
-}
-
-// ---- HW ì´ˆê¸°í™” ----
 static void STM_Nucleo_COMInit(COM_TypeDef com, const USART_InitTypeDef *cfg)
 {
   if (com != COM1)
@@ -128,116 +89,153 @@ static void USART_Config(void)
   STM_Nucleo_COMInit(COM1, &cfg);
 }
 
+// ¹®ÀÚ Àü¼Û ÇÔ¼ö
 static void send_char(uint8_t c)
 {
-  while (USART_GetFlagStatus(NUCLEO_COM1, USART_FLAG_TXE) == RESET)
-  {
-  }
-  USART_SendData(NUCLEO_COM1, c);
+    while (USART_GetFlagStatus(NUCLEO_COM1, USART_FLAG_TXE) == RESET)
+    {
+    }
+    USART_SendData(NUCLEO_COM1, c);
 }
 
+// ¹®ÀÚ¿­ Àü¼Û ÇÔ¼ö
 static void send_string(const char *s)
 {
-  while (*s)
-    send_char((uint8_t)*s++);
+    while (*s)
+        send_char((uint8_t)*s++);
 }
 
-// ---- RTC ----
-void RTC_Init_Config(void)
-{
-  RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
-  PWR_BackupAccessCmd(ENABLE); // ë°±ì—… ì ‘ê·¼ í™•ì¸
-  RCC_LSICmd(ENABLE);          // LSI í™•ì¸ í›„ ì´ˆê¸°í™”
-  while (RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET)
-    ;                                     // LSI í™•ì¸ ëŒ€ê¸°
-  RCC_RTCCLKConfig(RCC_RTCCLKSource_LSI); // RTC ì„¤ì • LSI
-  RCC_RTCCLKCmd(ENABLE);                  // RTC ì„¤ì • í™•ì¸
 
-  RTC_WaitForSynchro(); // ì´ˆê¸°í™” ëŒ€ê¸°
+void ADC_InitConfig(void) {
+	 RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+	    // ADC1¿¡ ´ëÇÑ Å¬·° È°¼ºÈ­
+	    RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
 
-  RTC_InitTypeDef RTC_InitStruct;
-  RTC_StructInit(&RTC_InitStruct);
-  RTC_InitStruct.RTC_HourFormat = RTC_HourFormat_24;
-  RTC_InitStruct.RTC_AsynchPrediv = 0x7F;
-  RTC_InitStruct.RTC_SynchPrediv = 0x0130; // LSI(32kHz) ì„¤ì •
-  RTC_Init(&RTC_InitStruct);
+	    GPIO_InitTypeDef GPIO_InitStruct;
+	    // PA3, PA7 ÇÉÀ» ¾Æ³¯·Î±× ¸ðµå·Î ¼³Á¤
+	    GPIO_InitStruct.GPIO_Pin = JOYSTICK_X_PIN | JOYSTICK_Y_PIN;  // PA3, PA7
+	    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AN;  // ¾Æ³¯·Î±× ¸ðµå
+	    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;  // Ç®¾÷/Ç®´Ù¿î ¾øÀ½
+	    GPIO_Init(GPIOA, &GPIO_InitStruct);  // PA3, PA7 ¾Æ³¯·Î±× ¼³Á¤
+
+	    ADC_InitTypeDef ADC_InitStruct;
+	    ADC_StructInit(&ADC_InitStruct);
+	    ADC_InitStruct.ADC_Resolution = ADC_Resolution_12b;  // 12ºñÆ® ÇØ»óµµ
+	    ADC_Init(ADC1, &ADC_InitStruct);  // ADC1 ÃÊ±âÈ­
+
+	    ADC_Cmd(ADC1, ENABLE);  // ADC1 È°¼ºÈ­
+	    ADC_SoftwareStartConv(ADC1);  // ADC º¯È¯ ½ÃÀÛ
 }
 
-// ---- ì‹œê°„ ì„¤ì • í›„ í™•ì¸ ----
-void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds)
-{
-  RTC_TimeTypeDef RTC_Time;
-  RTC_Time.RTC_Hours = hours;
-  RTC_Time.RTC_Minutes = minutes;
-  RTC_Time.RTC_Seconds = seconds;
-  RTC_SetTime(RTC_Format_BIN, &RTC_Time);
+// Á¶ÀÌ½ºÆ½ ¾Æ³¯·Î±× °ª ÀÐ±â
+uint16_t ReadJoystickX(void) {
+    ADC_RegularChannelConfig(ADC1, ADC_Channel_3, 1, ADC_SampleTime_15Cycles);
+    ADC_SoftwareStartConv(ADC1);
+    while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
+    return ADC_GetConversionValue(ADC1);
 }
 
-// ---- ì‹œê°„ í™•ì¸ ë¬¸ìžì—´ í™•ì¸ ----
-void RTC_GetCurrentTimeString(char *buf, size_t len)
-{
-  RTC_TimeTypeDef RTC_Time;
-  RTC_GetTime(RTC_Format_BIN, &RTC_Time);
-  snprintf(buf, len, "%02d:%02d:%02d", RTC_Time.RTC_Hours, RTC_Time.RTC_Minutes,
-           RTC_Time.RTC_Seconds);
+uint16_t ReadJoystickY(void) {
+    ADC_RegularChannelConfig(ADC1, ADC_Channel_7, 1, ADC_SampleTime_15Cycles);
+    ADC_SoftwareStartConv(ADC1);
+    while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
+    return ADC_GetConversionValue(ADC1);
 }
 
-// ---- ì•Œë¦¼ ì‹œê°„ ì„¤ì • ----
-void RTC_SetDailyAlarm(void)
-{
-  RTC_AlarmTypeDef alarm;
-  RTC_AlarmCmd(RTC_Alarm_A, DISABLE); // ì•Œë¦¼ ì„¤ì • í™•ì¸
+// Á¶ÀÌ½ºÆ½ Å×½ºÆ®¸¦ À§ÇÑ ÅÂ½ºÅ© ÇÔ¼ö
+void TaskStart(void *p_arg) {
+	OS_ERR err;
+	BSP_Init();
+	BSP_Tick_Init();
+	USART_Config();
+    uint16_t joystickX, joystickY;
+    char buffer[50];
+    int left,right,up,down;
+    srand(time(NULL));
+    int random_number = rand() % 5 + 1;
+    int pattern[5][4]={{1, 2, 3, 4},{1, 2, 4, 3},{1, 3, 2, 4},{1, 3, 4, 2},{1, 4, 2, 3}};
+    left = pattern[random_number][0];
+    right = pattern[random_number][1];
+    up = pattern[random_number][2];
+    down = pattern[random_number][3];
 
-  // EXTI Line 17 (RTC Alarm) í™•ì¸ í›„ í…ŒìŠ¤íŠ¸ ì„¤ì • í›„
-  EXTI_InitTypeDef EXTI_InitStruct;
-  EXTI_ClearITPendingBit(EXTI_Line17);
-  EXTI_InitStruct.EXTI_Line = EXTI_Line17;
-  EXTI_InitStruct.EXTI_Mode = EXTI_Mode_Interrupt;
-  EXTI_InitStruct.EXTI_Trigger = EXTI_Trigger_Rising;
-  EXTI_InitStruct.EXTI_LineCmd = ENABLE;
-  EXTI_Init(&EXTI_InitStruct);
+    while (1) {
+        joystickX = ReadJoystickX();
+        joystickY = ReadJoystickY();
 
-  // ë§¤ì¼ 9ì‹œ ì„¤ì • í›„
-  alarm.RTC_AlarmTime.RTC_Hours = 9;
-  alarm.RTC_AlarmTime.RTC_Minutes = 0;
-  alarm.RTC_AlarmTime.RTC_Seconds = 0;
-  alarm.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay; // ì¼ìž í™•ì¸ í›„ í…ŒìŠ¤íŠ¸ í›„
-  alarm.RTC_AlarmDateWeekDay = 1;                  // ì¼ìž í™•ì¸
-  alarm.RTC_AlarmDateWeekDaySel = RTC_AlarmDateWeekDaySel_Date;
+        // UART·Î Ãâ·Â
+        sprintf(buffer, "X: %d, Y: %d\n", joystickX*7, joystickY);
 
-  RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
-  RTC_ITConfig(RTC_IT_ALRA, ENABLE); // ì•Œë¦¼ í™•ì¸
-  RTC_AlarmCmd(RTC_Alarm_A, ENABLE); // ì•Œë¦¼ ì„¤ì • í™•ì¸
-  NVIC_EnableIRQ(RTC_Alarm_IRQn);    // NVIC í™•ì¸
-}
+        if((joystickX*7 >300 && joystickX*7 <600) && (joystickY >1000 && joystickY<3000)){
+        	send_string("center\r\n");
+        }
+        else if(joystickX*7 > 1000){
+        	send_string("right\r\n");
+        	right -=1;
+        	if (right < 0){
+        		right = 0;
+        	}
+        }
+        else if(joystickX*7 < 100){
+        	send_string("left\r\n");
+        	left -=1;
+        	if(left <0){
+        		left =0;
+        	}
+        }
+        else if( joystickY >3000){
+        	send_string("Up\r\n");
+        	up-=1;
+        	if(up<0){
+        		up =0;
+        	}
+        }
+        else{
+        	send_string("Down\r\n");
+        	down-=1;
+        	if(down<0){
+        		down=0;
+        	}
+        }
+        sprintf(buffer, "left: %d right: %d up: %d down: %d\n", left, right, up, down);
+		send_string(buffer);
 
-// ---- ë©”ì¸ Task ----
-static void TaskStart(void *p_arg)
-{
-  OS_ERR err;
-  (void)p_arg;
-  BSP_Init();
-  BSP_Tick_Init();
-  USART_Config();
+		if (left == 0 && right == 0 && up == 0 && down == 0) {
+           break;
+		 }
+        // Á¶ÀÌ½ºÆ½ ¹öÆ° (SW) È®ÀÎ
+        if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_12) == SET) {
+            send_string("Button Pressed\n");
+        }
 
-  while (DEF_TRUE)
-  {
-    RTC_GetCurrentTimeString(current_time, sizeof(current_time));
-    send_string(current_time);
-    send_string("\r\n");
-
-    if (alarm_flag)
-    {
-      send_string("\r\n!!! ALARM !!!\r\n");
-      alarm_flag = 0;
+        OSTimeDly(200, OS_OPT_TIME_PERIODIC, &err);  // 10ms ´ë±â
     }
-
-    OSTimeDlyHMSM(0, 0, 1, 0, OS_OPT_TIME_HMSM_STRICT, &err);
-  }
 }
 
-// ---- USART Task ----
-static void TaskUsart(void *p_arg)
-{
-  // ... existing code ...
+// ¸ÞÀÎ ÇÔ¼ö
+int main(void) {
+    OS_ERR err;
+
+    CPU_Init();  // CPU ÃÊ±âÈ­
+    OSInit(&err);  // RTOS ÃÊ±âÈ­
+
+    USART_Config();  // USART ¼³Á¤
+    ADC_InitConfig();  // ADC ¼³Á¤
+
+    // Á¶ÀÌ½ºÆ½ Å×½ºÆ® ÅÂ½ºÅ© »ý¼º
+    OSTaskCreate(&TCB_Start,
+                 "Start",
+                 TaskStart,
+                 NULL,
+                 START_PRIO,
+                 &STK_Start[0],
+                 START_STK_SIZE / 10,
+                 START_STK_SIZE,
+                 0, 0, 0,
+                 OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+                 &err);
+
+    OSStart(&err);  // RTOS ½ÃÀÛ
+
+    return 0;
 }

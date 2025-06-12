@@ -484,8 +484,7 @@ static void BSP_IntHandlerDummy(void) {}
 *********************************************************************************************************
 */
 
-// rtc alarm handler 재정의
-// 세팅 시간에 이르면 alaram_flag 1로 설정
+
 void BSP_IntHandlerRTCAlarm(void)
 {
   if (RTC_GetITStatus(RTC_IT_ALRA) != RESET)
