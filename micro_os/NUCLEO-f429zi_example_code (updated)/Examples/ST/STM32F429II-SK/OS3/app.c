@@ -66,15 +66,14 @@ typedef enum
 *********************************************************************************************************
 */
 
-// HW 珥덇린�솕
+// HW init
 static void USART_InitCOM(COM_TypeDef com, const USART_InitTypeDef *cfg);
 static void USART_Config(void);
-void RTC_Init(void);
+void RTC_CustomInit(void);
 static void TouchSensor_Init(void);
 static void KnockSensor_Init(void);
 void Buzzer_Init(void);
-// �뿬湲곗뿉 踰꾪듉�씠�옉 議곗씠�뒪�떛 珥덇린�솕 �븿�닔 異붽�
-void Joystick_InitConfig(void); //아날로그 디지털 변환 초기화(조이스틱)
+void Joystick_InitConfig(void); //joystick init
 void HW_ButtonInit(void); // button init
 
 // USART utils
@@ -82,7 +81,7 @@ static void USART_SendChar(uint8_t c);
 static void USART_SendString(const char *s);
 
 // RTC utils
-void RTC_SetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
+void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
 void RTC_GetTimeStr(char *buf, size_t len);
 void RTC_SetAlarmDaily(void);
 
@@ -122,7 +121,7 @@ uint8_t input_index = 0;
 uint8_t is_target_set = 0;
 volatile uint8_t alarm_flag = 0; // bsp_int.c�뿉�꽌 怨듭쑀
 
-//조이스틱 task 관련
+// joystick task
 static OS_TCB TCB_Joystick;
 static CPU_STK STK_Joystick[JOYSTICK_STK_SIZE];
 int left,right,up,down;
@@ -173,7 +172,7 @@ static void USART_Config(void)
 }
 
 // RTC
-void RTC_Init(void)
+void RTC_CustomInit(void)
 {
   RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
   PWR_BackupAccessCmd(ENABLE);
@@ -294,7 +293,7 @@ static void USART_SendString(const char *s)
 *********************************************************************************************************
 */
 
-void RTC_SetTime(uint8_t hours, uint8_t minutes, uint8_t seconds)
+void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds)
 {
   RTC_TimeTypeDef RTC_Time;
   RTC_Time.RTC_Hours = hours;
@@ -369,7 +368,7 @@ void Buzzer_Off(void)
 *                                           JOYSTICK FUNCTIONS
 *********************************************************************************************************
 */
-// 조이스틱 아날로그 값 읽기
+// Read analog value
 uint16_t ReadJoystickX(void) {
     ADC_RegularChannelConfig(ADC1, ADC_Channel_3, 1, ADC_SampleTime_15Cycles);
     ADC_SoftwareStartConv(ADC1);
@@ -408,8 +407,6 @@ int main(void)
 
   /* Basic Init */
   RCC_DeInit();
-  //    SystemCoreClockUpdate();
-  Setup_Gpio();
 
   /* BSP Init */
   BSP_IntDisAll();
@@ -419,8 +416,8 @@ int main(void)
   Math_Init();
 
   // �쁽�옱 �떆媛꾧낵 �븣�엺 �슱由� �떆媛� �꽕�젙
-  RTC_Init();
-  RTC_SetTime(8, 59, 55);
+  RTC_CustomInit();
+  RTC_CustomSetTime(8, 59, 55);
   RTC_SetAlarmDaily();
 
   /* OS Init */
@@ -465,7 +462,7 @@ static void AppTaskStart(void *p_arg)
 
   USART_Config();
   TouchSensor_Init();
-  KnockSeonsor_Init();
+  KnockSensor_Init();
   Buzzer_Init();
   // �뿬湲� 議곗씠�뒪�떛,踰꾪듉 珥덇린�솕 �븿�닔 異붽�
 
@@ -477,8 +474,7 @@ static void AppTaskStart(void *p_arg)
   CPU_IntDisMeasMaxCurReset();
 #endif
 
-  APP_TRACE_DBG(("Creating Application Tasks\n\r"));
-  AppTaskCreate();
+  ApptaskCreate(NULL);
 }
 
 static void ApptaskCreate(void *p_arg)
@@ -550,11 +546,10 @@ void JoystickTaskStart(void *p_arg) {
 		if (left == 0 && right == 0 && up == 0 && down == 0) {
            break;
 		 }
-        // 조이스틱 버튼 (SW) 확인
         if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_12) == SET) {
             send_string("Button Pressed\n");
         }
 
-        OSTimeDly(200, OS_OPT_TIME_PERIODIC, &err);  // 10ms 대기
+        OSTimeDly(200, OS_OPT_TIME_PERIODIC, &err);
     }
 }
