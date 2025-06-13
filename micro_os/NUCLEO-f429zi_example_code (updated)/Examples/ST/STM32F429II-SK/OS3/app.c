@@ -45,23 +45,23 @@
 #define JOYSTICK_SW_PIN GPIO_Pin_12 // PC13 (SW 버튼)
 
 // touch sensor
-#define TOUCH_TASK_PRIO 4u
+#define TOUCH_TASK_PRIO 5u
 #define TOUCH_TASK_STK_SIZE 512u
 
 // knock sensor
-#define KNOCK_TASK_PRIO 5u
+#define KNOCK_TASK_PRIO 6u
 #define KNOCK_TASK_STK_SIZE 512u
 
 // buzzer
-#define BUZZER_TASK_PRIO 6u
+#define BUZZER_TASK_PRIO 3u
 #define BUZZER_TASK_STK_SIZE 512u
 
 // joystick
+#define JOYSTICK_PRIO 7u
 #define JOYSTICK_STK_SIZE 512u
-#define JOYSTICK_PRIO 3u
 
 // alarm
-#define ALARM_TASK_PRIO 7u
+#define ALARM_TASK_PRIO 4u
 #define ALARM_TASK_STK_SIZE 512u
 
 // USART
