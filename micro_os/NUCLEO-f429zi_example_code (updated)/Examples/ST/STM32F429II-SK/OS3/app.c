@@ -72,6 +72,10 @@ void RTC_SetAlarmDaily(void);
 // touch sensor 관련
 static void GPIO_Init_TouchSensor(void);
 
+// knock sensor 관련
+static void GPIO_Init_KnockSensor(void);
+static uint8_t KnockSensor_Read(void);
+
 // Task
 static void Task_Start(void *p_arg);
 
@@ -172,6 +176,20 @@ static void GPIO_Init_TouchSensor(void);
   GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
+// knock sensor
+static void GPIO_Init_KnockSensor(void)
+{
+  // GPIOA 클럭 활성화
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+  // PA6 입력 핀 설정
+  GPIO_InitTypeDef GPIO_InitStruct;
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_6;        // PA6
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;     // 입력 모드
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL; // 풀업/풀다운 없음
+  GPIO_Init(GPIOA, &GPIO_InitStruct);
+}
+
 /*
 *********************************************************************************************************
 *                                       USART FUNCTIONS
@@ -241,6 +259,18 @@ void RTC_SetAlarmDaily(void)
 
 /*
 *********************************************************************************************************
+*                                       KNOCK SEONSOR FUNCTIONS
+*********************************************************************************************************
+*/
+
+// ---- 노크 센서 값 읽기 ----
+static uint8_t KnockSensor_Read(void)
+{
+  return GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_6); // 1이면 진동 감지됨
+}
+
+/*
+*********************************************************************************************************
 *                                                main
 *********************************************************************************************************
 */
@@ -283,6 +313,7 @@ static void Task_Start(void *p_arg)
   USART_Config();
 
   GPIO_Init_TouchSensor();
+  GPIO_Init_KnockSensor();
 
   while (DEF_TRUE)
   {
