@@ -581,7 +581,7 @@ static void AppTaskStart(void *p_arg)
   BSP_Init();
   BSP_Tick_Init();
   Buzzer_Init();
-  // TouchSensor_Init();
+  TouchSensor_Init();
   //  KnockSensor_Init();
   //  JoyStick_Init();
   //  Button_Init();
@@ -642,7 +642,7 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-  //  // mission task create (PRIO 5)
+  // mission task create (PRIO 5)
   //  OSTaskCreate(&TCB_Mission,
   //               "Mission Task",
   //               MissionTask,
@@ -774,33 +774,61 @@ static void BuzzerTask(void *p_arg)
 static void TouchSensorTask(void *p_arg)
 {
   OS_ERR err;
-  uint8_t prev = 0, curr;
+  OS_FLAGS flags;
+  uint8_t prev, curr;
 
   (void)p_arg;
 
   while (DEF_TRUE)
   {
-    curr = GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3); // 터치 센서 핀 (A0)
+    // 1. 알람 울림 신호 기다림
+    flags = OSFlagPend(&AlarmFlagGroup,
+                       ALARM_FLAG_START,
+                       0,
+                       OS_OPT_PEND_FLAG_SET_ANY + OS_OPT_PEND_BLOCKING,
+                       0,
+                       &err);
 
-    if (curr == Bit_SET && prev == Bit_RESET)
+    // 2. 터치 감지 시작 (단, 한 번만 감지)
+    prev = GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3);
+
+    while (DEF_TRUE)
     {
-      static const char msg[] = "[터치] 감지됨. 미션 시작!\r\n";
-      OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
+      curr = GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3);
 
-      // mission task에 ready flag post
-      OSFlagPost(&AlarmFlagGroup,
-                 ALARM_FLAG_TOUCH_READY,
-                 OS_OPT_POST_FLAG_SET + OS_OPT_POST_ALL,
-                 &err);
+      if (curr == Bit_SET && prev == Bit_RESET)
+      {
+        static const char msg[] = "[터치] 감지됨. 미션 시작!\r\n";
+        OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
 
-      break;
+        // mission task에 ready flag post
+        OSFlagPost(&AlarmFlagGroup,
+                   ALARM_FLAG_TOUCH_READY,
+                   OS_OPT_POST_FLAG_SET + OS_OPT_POST_ALL,
+                   &err);
+
+        // 3. 알람 OFF(해제)될 때까지 대기 (더 이상 터치 감지 X)
+        while (1)
+        {
+          // ALARM_FLAG_OFF 오면 break (휴식 끝)
+          if (OSFlagPend(&AlarmFlagGroup,
+                         ALARM_FLAG_OFF,
+                         0,
+                         OS_OPT_PEND_FLAG_SET_ANY + OS_OPT_PEND_BLOCKING,
+                         0,
+                         &err))
+          {
+            break;
+          }
+          OSTimeDlyHMSM(0, 0, 0, 50, OS_OPT_TIME_HMSM_STRICT, &err);
+        }
+        break; // 바깥 while(DEF_TRUE)로 복귀(즉, 알람 다시 울릴 때까지 감지 X)
+      }
+
+      // 터치 감지 전이라면, 계속 감시
+      prev = curr;
+      OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
     }
-    else
-    {
-      OSTimeDlyHMSM(0, 0, 0, 50, OS_OPT_TIME_HMSM_STRICT, &err);
-    }
-
-    prev = curr;
   }
 }
 
