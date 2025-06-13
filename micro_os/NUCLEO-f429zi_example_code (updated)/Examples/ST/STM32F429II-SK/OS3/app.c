@@ -57,24 +57,31 @@ typedef enum
 *********************************************************************************************************
 */
 
-// USART 관련
+// HW 초기화
 static void USART_InitCOM(COM_TypeDef com, const USART_InitTypeDef *cfg);
 static void USART_Config(void);
+void RTC_Init(void);
+static void TouchSensor_Init(void);
+static void KnockSensor_Init(void);
+void Buzzer_Init(void);
+
+// USART 관련
 static void USART_SendChar(uint8_t c);
 static void USART_SendString(const char *s);
 
 // RTC 관련
-void RTC_Init(void);
 void RTC_SetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
 void RTC_GetTimeStr(char *buf, size_t len);
 void RTC_SetAlarmDaily(void);
 
 // touch sensor 관련
-static void GPIO_Init_TouchSensor(void);
 
 // knock sensor 관련
-static void GPIO_Init_KnockSensor(void);
 static uint8_t KnockSensor_Read(void);
+
+// buzzer 관련
+void Buzzer_On(void);
+void Buzzer_Off(void);
 
 // Task
 static void Task_Start(void *p_arg);
@@ -161,7 +168,7 @@ void RTC_Init(void)
 }
 
 // touch sensor
-static void GPIO_Init_TouchSensor(void);
+static void TouchSensor_Init(void);
 {
   GPIO_InitTypeDef GPIO_InitStruct;
 
@@ -177,7 +184,7 @@ static void GPIO_Init_TouchSensor(void);
 }
 
 // knock sensor
-static void GPIO_Init_KnockSensor(void)
+static void KnockSensor_Init(void)
 {
   // GPIOA 클럭 활성화
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
@@ -187,6 +194,20 @@ static void GPIO_Init_KnockSensor(void)
   GPIO_InitStruct.GPIO_Pin = GPIO_Pin_6;        // PA6
   GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;     // 입력 모드
   GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL; // 풀업/풀다운 없음
+  GPIO_Init(GPIOA, &GPIO_InitStruct);
+}
+
+// buzzer
+void Buzzer_Init(void)
+{
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+  GPIO_InitTypeDef GPIO_InitStruct;
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_5; // (PA5 / D13)
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OUT;
+  GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
+  GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
   GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
@@ -271,6 +292,22 @@ static uint8_t KnockSensor_Read(void)
 
 /*
 *********************************************************************************************************
+*                                           BUZZER FUNCTIONS
+*********************************************************************************************************
+*/
+
+void Buzzer_On(void)
+{
+  GPIO_SetBits(GPIOA, GPIO_Pin_5);
+}
+
+void Buzzer_Off(void)
+{
+  GPIO_ResetBits(GPIOA, GPIO_Pin_5);
+}
+
+/*
+*********************************************************************************************************
 *                                                main
 *********************************************************************************************************
 */
@@ -310,10 +347,11 @@ static void Task_Start(void *p_arg)
 
   BSP_Init();
   BSP_Tick_Init();
-  USART_Config();
 
-  GPIO_Init_TouchSensor();
-  GPIO_Init_KnockSensor();
+  USART_Config();
+  TouchSensor_Init();
+  KnockSeonsor_Init();
+  Buzzer_Init();
 
   while (DEF_TRUE)
   {
