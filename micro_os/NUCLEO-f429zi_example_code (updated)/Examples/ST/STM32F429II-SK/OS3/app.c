@@ -769,3 +769,30 @@ static void BuzzerTask(void *p_arg)
     OSQPost(&USARTMsgQ, (void *)msg_off, sizeof(msg_off), OS_OPT_POST_FIFO, &err);
   }
 }
+
+// USART Task
+static void USARTTask(void *p_arg)
+{
+  OS_ERR err;
+  void *msg;
+  OS_MSG_SIZE size;
+
+  (void)p_arg;
+
+  while (DEF_TRUE)
+  {
+    // 메시지 큐에서 문자열 수신 (blocking)
+    msg = OSQPend(&USARTMsgQ,
+                  0,
+                  OS_OPT_PEND_BLOCKING,
+                  &size,
+                  0,
+                  &err);
+
+    if (err == OS_ERR_NONE && msg != NULL)
+    {
+      // 문자열 출력
+      USART_SendString((char *)msg);
+    }
+  }
+}
