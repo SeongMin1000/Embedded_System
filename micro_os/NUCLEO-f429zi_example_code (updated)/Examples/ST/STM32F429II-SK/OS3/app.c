@@ -1,3 +1,9 @@
+/*
+*********************************************************************************************************
+*                                             INCLUDE FILES
+*********************************************************************************************************
+*/
+
 #include "bsp.h"
 #include "cpu.h"
 #include "os.h"
@@ -11,31 +17,11 @@
 #include <stdio.h>
 #include <string.h>
 
-// ---- 타입, 변수 선언 ----
-typedef enum
-{
-  COM1 = 0,
-  COMn
-} COM_TypeDef;
-
-// ---- 함수 선언 ----
-// (1) HW 초기화
-static void STM_Nucleo_COMInit(COM_TypeDef com, const USART_InitTypeDef *cfg);
-static void USART_Config(void);
-
-// (2) RTC 설정
-void RTC_Init_Config(void);
-void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
-void RTC_GetCurrentTimeString(char *buf, size_t len);
-void RTC_SetDailyAlarm(void);
-
-// (3) USART 추가
-static void send_char(uint8_t c);
-static void send_string(const char *s);
-
-// (4) Task 함수
-static void TaskStart(void *p_arg);
-static void TaskUsart(void *p_arg);
+/*
+*********************************************************************************************************
+*                                            LOCAL DEFINES
+*********************************************************************************************************
+*/
 
 #define NUCLEO_COM1 USART3
 #define NUCLEO_COM1_CLK RCC_APB1Periph_USART3
@@ -53,7 +39,45 @@ static void TaskUsart(void *p_arg);
 #define START_PRIO 2u
 #define START_STK_SIZE 512u
 
-// ---- 변수 선언 ----
+/*
+*********************************************************************************************************
+*                                            TYPES DEFINITIONS
+*********************************************************************************************************
+*/
+
+typedef enum
+{
+  COM1 = 0,
+  COMn
+} COM_TypeDef;
+
+/*
+*********************************************************************************************************
+*                                         FUNCTION PROTOTYPES
+*********************************************************************************************************
+*/
+
+// USART 관련
+static void USART_InitCOM(COM_TypeDef com, const USART_InitTypeDef *cfg);
+static void USART_Config(void);
+static void USART_SendChar(uint8_t c);
+static void USART_SendString(const char *s);
+
+// RTC 관련
+void RTC_Init(void);
+void RTC_SetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
+void RTC_GetTimeStr(char *buf, size_t len);
+void RTC_SetAlarmDaily(void);
+
+// Task
+static void Task_Start(void *p_arg);
+
+/*
+*********************************************************************************************************
+*                                       LOCAL GLOBAL VARIABLES
+*********************************************************************************************************
+*/
+
 static OS_TCB TCB_Start;
 static CPU_STK STK_Start[START_STK_SIZE];
 
@@ -62,40 +86,21 @@ char current_time[16] = {0};
 char input_buffer[32];
 uint8_t input_index = 0;
 uint8_t is_target_set = 0;
+volatile uint8_t alarm_flag = 0; // bsp_int.c에서 공유
 
-// bsp_int.c에서 공유
-volatile uint8_t alarm_flag = 0;
+/*
+*********************************************************************************************************
+*                                   HARDWARE MODULE INITIALIZATION
+*********************************************************************************************************
+*/
 
-// ---- 메인 함수 ----
-int main(void)
-{
-  OS_ERR err;
-  CPU_Init();
-  OSInit(&err);
-
-  RTC_Init_Config();            // RTC 설정, LSI 확인 후 설정 후
-  RTC_CustomSetTime(8, 59, 55); // 테스트용 시간
-  RTC_SetDailyAlarm();          // 매일 9시 알림
-
-  OSTaskCreate(&TCB_Start, "Start", TaskStart, 0, START_PRIO, &STK_Start[0],
-               START_STK_SIZE / 10, START_STK_SIZE, 0, 0, 0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR, &err);
-
-  RTC_AlarmCmd(RTC_Alarm_A, ENABLE); // 알람 동작 시작
-  NVIC_EnableIRQ(RTC_Alarm_IRQn);    // NVIC에 등록
-
-  OSStart(&err);
-  while (1)
-    ; // OSStart() 호출 후 대기 중 오류 발생 시 이 부분 실행
-}
-
-// ---- HW 초기화 ----
-static void STM_Nucleo_COMInit(COM_TypeDef com, const USART_InitTypeDef *cfg)
+// USART
+static void USART_InitCOM(COM_TypeDef com, const USART_InitTypeDef *cfg)
 {
   if (com != COM1)
     return;
-  RCC_AHB1PeriphClockCmd(NUCLEO_COM1_TX_PORT_CLK | NUCLEO_COM1_RX_PORT_CLK,
-                         ENABLE);
+
+  RCC_AHB1PeriphClockCmd(NUCLEO_COM1_TX_PORT_CLK | NUCLEO_COM1_RX_PORT_CLK, ENABLE);
   RCC_APB1PeriphClockCmd(NUCLEO_COM1_CLK, ENABLE);
 
   GPIO_PinAFConfig(NUCLEO_COM1_TX_PORT, NUCLEO_COM1_TX_SRC, NUCLEO_COM1_TX_AF);
@@ -125,46 +130,55 @@ static void USART_Config(void)
   cfg.USART_Parity = USART_Parity_No;
   cfg.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
   cfg.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
-  STM_Nucleo_COMInit(COM1, &cfg);
+  USART_InitCOM(COM1, &cfg);
 }
 
-static void send_char(uint8_t c)
-{
-  while (USART_GetFlagStatus(NUCLEO_COM1, USART_FLAG_TXE) == RESET)
-  {
-  }
-  USART_SendData(NUCLEO_COM1, c);
-}
-
-static void send_string(const char *s)
-{
-  while (*s)
-    send_char((uint8_t)*s++);
-}
-
-// ---- RTC ----
-void RTC_Init_Config(void)
+// RTC
+void RTC_Init(void)
 {
   RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
-  PWR_BackupAccessCmd(ENABLE); // 백업 접근 확인
-  RCC_LSICmd(ENABLE);          // LSI 확인 후 초기화
+  PWR_BackupAccessCmd(ENABLE);
+  RCC_LSICmd(ENABLE);
   while (RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET)
-    ;                                     // LSI 확인 대기
-  RCC_RTCCLKConfig(RCC_RTCCLKSource_LSI); // RTC 설정 LSI
-  RCC_RTCCLKCmd(ENABLE);                  // RTC 설정 확인
-
-  RTC_WaitForSynchro(); // 초기화 대기
+    ;
+  RCC_RTCCLKConfig(RCC_RTCCLKSource_LSI);
+  RCC_RTCCLKCmd(ENABLE);
+  RTC_WaitForSynchro();
 
   RTC_InitTypeDef RTC_InitStruct;
   RTC_StructInit(&RTC_InitStruct);
   RTC_InitStruct.RTC_HourFormat = RTC_HourFormat_24;
   RTC_InitStruct.RTC_AsynchPrediv = 0x7F;
-  RTC_InitStruct.RTC_SynchPrediv = 0x0130; // LSI(32kHz) 설정
+  RTC_InitStruct.RTC_SynchPrediv = 0x0130;
   RTC_Init(&RTC_InitStruct);
 }
 
-// ---- 시간 설정 후 확인 ----
-void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds)
+/*
+*********************************************************************************************************
+*                                       USART FUNCTIONS
+*********************************************************************************************************
+*/
+
+static void USART_SendChar(uint8_t c)
+{
+  while (USART_GetFlagStatus(NUCLEO_COM1, USART_FLAG_TXE) == RESET)
+    ;
+  USART_SendData(NUCLEO_COM1, c);
+}
+
+static void USART_SendString(const char *s)
+{
+  while (*s)
+    USART_SendChar((uint8_t)*s++);
+}
+
+/*
+*********************************************************************************************************
+*                                       RTC FUNCTIONS
+*********************************************************************************************************
+*/
+
+void RTC_SetTime(uint8_t hours, uint8_t minutes, uint8_t seconds)
 {
   RTC_TimeTypeDef RTC_Time;
   RTC_Time.RTC_Hours = hours;
@@ -173,22 +187,17 @@ void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds)
   RTC_SetTime(RTC_Format_BIN, &RTC_Time);
 }
 
-// ---- 시간 확인 문자열 확인 ----
-void RTC_GetCurrentTimeString(char *buf, size_t len)
+void RTC_GetTimeStr(char *buf, size_t len)
 {
   RTC_TimeTypeDef RTC_Time;
   RTC_GetTime(RTC_Format_BIN, &RTC_Time);
-  snprintf(buf, len, "%02d:%02d:%02d", RTC_Time.RTC_Hours, RTC_Time.RTC_Minutes,
-           RTC_Time.RTC_Seconds);
+  snprintf(buf, len, "%02d:%02d:%02d", RTC_Time.RTC_Hours, RTC_Time.RTC_Minutes, RTC_Time.RTC_Seconds);
 }
 
-// ---- 알림 시간 설정 ----
-void RTC_SetDailyAlarm(void)
+void RTC_SetAlarmDaily(void)
 {
-  RTC_AlarmTypeDef alarm;
-  RTC_AlarmCmd(RTC_Alarm_A, DISABLE); // 알림 설정 확인
+  RTC_AlarmCmd(RTC_Alarm_A, DISABLE);
 
-  // EXTI Line 17 (RTC Alarm) 확인 후 테스트 설정 후
   EXTI_InitTypeDef EXTI_InitStruct;
   EXTI_ClearITPendingBit(EXTI_Line17);
   EXTI_InitStruct.EXTI_Line = EXTI_Line17;
@@ -197,47 +206,75 @@ void RTC_SetDailyAlarm(void)
   EXTI_InitStruct.EXTI_LineCmd = ENABLE;
   EXTI_Init(&EXTI_InitStruct);
 
-  // 매일 9시 설정 후
+  RTC_AlarmTypeDef alarm;
   alarm.RTC_AlarmTime.RTC_Hours = 9;
   alarm.RTC_AlarmTime.RTC_Minutes = 0;
   alarm.RTC_AlarmTime.RTC_Seconds = 0;
-  alarm.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay; // 일자 확인 후 테스트 후
-  alarm.RTC_AlarmDateWeekDay = 1;                  // 일자 확인
+  alarm.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay;
+  alarm.RTC_AlarmDateWeekDay = 1;
   alarm.RTC_AlarmDateWeekDaySel = RTC_AlarmDateWeekDaySel_Date;
 
   RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
-  RTC_ITConfig(RTC_IT_ALRA, ENABLE); // 알림 확인
-  RTC_AlarmCmd(RTC_Alarm_A, ENABLE); // 알림 설정 확인
-  NVIC_EnableIRQ(RTC_Alarm_IRQn);    // NVIC 확인
+  RTC_ITConfig(RTC_IT_ALRA, ENABLE);
+  RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
+  NVIC_EnableIRQ(RTC_Alarm_IRQn);
 }
 
-// ---- 메인 Task ----
-static void TaskStart(void *p_arg)
+/*
+*********************************************************************************************************
+*                                                main
+*********************************************************************************************************
+*/
+
+int main(void)
+{
+  OS_ERR err;
+  CPU_Init();
+  OSInit(&err);
+
+  RTC_Init();
+  RTC_SetTime(8, 59, 55);
+  RTC_SetAlarmDaily();
+
+  OSTaskCreate(&TCB_Start, "Start", Task_Start, 0, START_PRIO, &STK_Start[0],
+               START_STK_SIZE / 10, START_STK_SIZE, 0, 0, 0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR, &err);
+
+  RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
+  NVIC_EnableIRQ(RTC_Alarm_IRQn);
+  OSStart(&err);
+
+  while (1)
+    ; // should never reach
+}
+
+/*
+*********************************************************************************************************
+*                                           TASK FUNCTION
+*********************************************************************************************************
+*/
+
+static void Task_Start(void *p_arg)
 {
   OS_ERR err;
   (void)p_arg;
+
   BSP_Init();
   BSP_Tick_Init();
   USART_Config();
 
   while (DEF_TRUE)
   {
-    RTC_GetCurrentTimeString(current_time, sizeof(current_time));
-    send_string(current_time);
-    send_string("\r\n");
+    RTC_GetTimeStr(current_time, sizeof(current_time));
+    USART_SendString(current_time);
+    USART_SendString("\r\n");
 
     if (alarm_flag)
     {
-      send_string("\r\n!!! ALARM !!!\r\n");
+      USART_SendString("\r\n!!! ALARM !!!\r\n");
       alarm_flag = 0;
     }
 
     OSTimeDlyHMSM(0, 0, 1, 0, OS_OPT_TIME_HMSM_STRICT, &err);
   }
-}
-
-// ---- USART Task ----
-static void TaskUsart(void *p_arg)
-{
-  // ... existing code ...
 }
