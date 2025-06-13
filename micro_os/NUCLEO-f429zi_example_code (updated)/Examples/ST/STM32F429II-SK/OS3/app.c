@@ -36,17 +36,37 @@
 #define NUCLEO_COM1_RX_SRC GPIO_PinSource9
 #define NUCLEO_COM1_RX_AF GPIO_AF_USART3
 
-#define APP_CFG_ApptaskCreate_PRIO       2u
+#define APP_CFG_ApptaskCreate_PRIO 2u
 #define APP_CFG_ApptaskCreate_STK_SIZE 512u
 
-// 조이스틱 pin
-#define JOYSTICK_X_PIN    GPIO_Pin_3 // PA0
-#define JOYSTICK_Y_PIN    GPIO_Pin_7 // PA7
-#define JOYSTICK_SW_PIN   GPIO_Pin_12 // PC13 (SW 버튼)
+// joystick pin
+#define JOYSTICK_X_PIN GPIO_Pin_3   // PA0
+#define JOYSTICK_Y_PIN GPIO_Pin_7   // PA7
+#define JOYSTICK_SW_PIN GPIO_Pin_12 // PC13 (SW 버튼)
 
-//조이스틱  task 등록 관련
+// touch sensor
+#define TOUCH_TASK_PRIO 4u
+#define TOUCH_TASK_STK_SIZE 512u
+
+// knock sensor
+#define KNOCK_TASK_PRIO 5u
+#define KNOCK_TASK_STK_SIZE 512u
+
+// buzzer
+#define BUZZER_TASK_PRIO 6u
+#define BUZZER_TASK_STK_SIZE 512u
+
+// joystick
 #define JOYSTICK_STK_SIZE 512u
-#define JOYSTICK_PRIO     3u
+#define JOYSTICK_PRIO 3u
+
+// alarm
+#define ALARM_TASK_PRIO 7u
+#define ALARM_TASK_STK_SIZE 512u
+
+// USART
+#define USART_TASK_PRIO 8u
+#define USART_TASK_STK_SIZE 512u
 
 /*
 *********************************************************************************************************
@@ -73,8 +93,8 @@ void RTC_CustomInit(void);
 static void TouchSensor_Init(void);
 static void KnockSensor_Init(void);
 void Buzzer_Init(void);
-void Joystick_InitConfig(void); //joystick init
-void HW_ButtonInit(void); // button init
+void JoyStick_Init(void); // joystick init
+void Button_Init(void);   // button init
 
 // USART utils
 static void USART_SendChar(uint8_t c);
@@ -95,8 +115,8 @@ void Buzzer_On(void);
 void Buzzer_Off(void);
 
 // joystick utils
-uint16_t ReadJoystickX(void);
-uint16_t ReadJoystickY(void);
+uint16_t JoyStick_ReadX(void);
+uint16_t JoyStick_ReadY(void);
 
 // button utils
 void Button_delay(uint32_t ms);
@@ -104,14 +124,20 @@ void Button_delay(uint32_t ms);
 // Task
 static void AppTaskStart(void *p_arg);
 static void ApptaskCreate(void *p_arg);
-void JoystickTaskStart(void *p_arg);
+static void TouchSensorTask(void *p_arg);
+static void KnockSensorTask(void *p_arg);
+static void BuzzerTask(void *p_arg);
+static void JoystickTask(void *p_arg);
+static void AlarmTask(void *p_arg);
+static void USARTTask(void *p_arg);
+
 /*
 *********************************************************************************************************
 *                                       LOCAL GLOBAL VARIABLES
 *********************************************************************************************************
 */
 
-static OS_TCB  AppTaskStartTCB;
+static OS_TCB AppTaskStartTCB;
 static CPU_STK AppTaskStartStk[APP_CFG_ApptaskCreate_STK_SIZE];
 
 char target_time[16] = {0};
@@ -119,12 +145,32 @@ char current_time[16] = {0};
 char input_buffer[32];
 uint8_t input_index = 0;
 uint8_t is_target_set = 0;
-volatile uint8_t alarm_flag = 0; // bsp_int.c�뿉�꽌 怨듭쑀
+volatile uint8_t alarm_flag = 0; // bsp_int.c
 
-// joystick task
+// touch sensor
+static OS_TCB TCB_Touch;
+static CPU_STK STK_Touch[TOUCH_TASK_STK_SIZE];
+
+// knock sensor
+static OS_TCB TCB_Knock;
+static CPU_STK STK_Knock[KNOCK_TASK_STK_SIZE];
+
+// buzzer
+static OS_TCB TCB_Buzzer;
+static CPU_STK STK_Buzzer[BUZZER_TASK_STK_SIZE];
+
+// joystick
 static OS_TCB TCB_Joystick;
 static CPU_STK STK_Joystick[JOYSTICK_STK_SIZE];
-int left,right,up,down;
+int left, right, up, down;
+
+// alram
+static OS_TCB TCB_Alarm;
+static CPU_STK STK_Alarm[ALARM_TASK_STK_SIZE];
+
+// USART
+static OS_TCB TCB_USART;
+static CPU_STK STK_USART[USART_TASK_STK_SIZE];
 
 /*
 *********************************************************************************************************
@@ -196,13 +242,11 @@ static void TouchSensor_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct;
 
-  // GPIOA �겢�윮 Enable
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
 
-  // PA3 �엯�젰�쑝濡� �꽕�젙 (���떎�슫 �궗�슜)
-  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_3;      // PA3 (A0)
-  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;   // �엯�젰 紐⑤뱶
-  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_DOWN; // ���떎�슫 �꽕�젙
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_3; // (PA3 / A0)
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_DOWN;
 
   GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
@@ -210,14 +254,12 @@ static void TouchSensor_Init(void)
 // knock sensor
 static void KnockSensor_Init(void)
 {
-  // GPIOA �겢�윮 �솢�꽦�솕
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
 
-  // PA6 �엯�젰 �� �꽕�젙
   GPIO_InitTypeDef GPIO_InitStruct;
-  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_6;        // PA6
-  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;     // �엯�젰 紐⑤뱶
-  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL; // ���뾽/���떎�슫 �뾾�쓬
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_6; // PA6
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
   GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
@@ -236,36 +278,35 @@ void Buzzer_Init(void)
 }
 
 // joystick
-void Joystick_InitConfig(void) {
-	 RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
-	    // ADC1에 대한 클럭 활성화
-	    RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
+void JoyStick_Init(void)
+{
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+  RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
 
-	    GPIO_InitTypeDef GPIO_InitStruct;
-	    // PA3, PA7 핀을 아날로그 모드로 설정
-	    GPIO_InitStruct.GPIO_Pin = JOYSTICK_X_PIN | JOYSTICK_Y_PIN;  // PA3, PA7
-	    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AN;  // 아날로그 모드
-	    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;  // 풀업/풀다운 없음
-	    GPIO_Init(GPIOA, &GPIO_InitStruct);  // PA3, PA7 아날로그 설정
+  GPIO_InitTypeDef GPIO_InitStruct;
+  GPIO_InitStruct.GPIO_Pin = JOYSTICK_X_PIN | JOYSTICK_Y_PIN; // PA3, PA7
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AN;                   // analog mode
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
+  GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-	    ADC_InitTypeDef ADC_InitStruct;
-	    ADC_StructInit(&ADC_InitStruct);
-	    ADC_InitStruct.ADC_Resolution = ADC_Resolution_12b;  // 12비트 해상도
-	    ADC_Init(ADC1, &ADC_InitStruct);  // ADC1 초기화
+  ADC_InitTypeDef ADC_InitStruct;
+  ADC_StructInit(&ADC_InitStruct);
+  ADC_InitStruct.ADC_Resolution = ADC_Resolution_12b;
+  ADC_Init(ADC1, &ADC_InitStruct);
 
-	    ADC_Cmd(ADC1, ENABLE);  // ADC1 활성화
-	    ADC_SoftwareStartConv(ADC1);  // ADC 변환 시작
+  ADC_Cmd(ADC1, ENABLE);       // ADC1 activate
+  ADC_SoftwareStartConv(ADC1); // ADC convert
 }
 
-//button init
-void HW_ButtonInit(void)
+// button init
+void Button_Init(void)
 {
-    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
-    GPIO_InitTypeDef GPIO_InitStruct;
-    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_0;           // PC0 사용
-    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;        // 입력 모드
-    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;        // 풀업 설정
-    GPIO_Init(GPIOC, &GPIO_InitStruct);
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+  GPIO_InitTypeDef GPIO_InitStruct;
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_0; // PC0
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;
+  GPIO_Init(GPIOC, &GPIO_InitStruct);
 }
 
 /*
@@ -341,10 +382,9 @@ void RTC_SetAlarmDaily(void)
 *********************************************************************************************************
 */
 
-// ---- �끂�겕 �꽱�꽌 媛� �씫湲� ----
 static uint8_t KnockSensor_Read(void)
 {
-  return GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_6); // 1�씠硫� 吏꾨룞 媛먯��맖
+  return GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_6);
 }
 
 /*
@@ -368,38 +408,45 @@ void Buzzer_Off(void)
 *                                           JOYSTICK FUNCTIONS
 *********************************************************************************************************
 */
+
 // Read analog value
-uint16_t ReadJoystickX(void) {
-    ADC_RegularChannelConfig(ADC1, ADC_Channel_3, 1, ADC_SampleTime_15Cycles);
-    ADC_SoftwareStartConv(ADC1);
-    while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
-    return ADC_GetConversionValue(ADC1);
+uint16_t JoyStick_ReadX(void)
+{
+  ADC_RegularChannelConfig(ADC1, ADC_Channel_3, 1, ADC_SampleTime_15Cycles);
+  ADC_SoftwareStartConv(ADC1);
+  while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET)
+    ;
+  return ADC_GetConversionValue(ADC1);
 }
 
-uint16_t ReadJoystickY(void) {
-    ADC_RegularChannelConfig(ADC1, ADC_Channel_7, 1, ADC_SampleTime_15Cycles);
-    ADC_SoftwareStartConv(ADC1);
-    while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
-    return ADC_GetConversionValue(ADC1);
+uint16_t JoyStick_ReadY(void)
+{
+  ADC_RegularChannelConfig(ADC1, ADC_Channel_7, 1, ADC_SampleTime_15Cycles);
+  ADC_SoftwareStartConv(ADC1);
+  while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET)
+    ;
+  return ADC_GetConversionValue(ADC1);
 }
+
 /*
 *********************************************************************************************************
 *                                           BUTTON FUNCTIONS
 *********************************************************************************************************
 */
+
 void Button_delay(uint32_t ms)
 {
-    for (uint32_t i = 0; i < ms * 4000; i++)
-        __NOP();
+  for (uint32_t i = 0; i < ms * 4000; i++)
+    __NOP();
 }
+
 /*
 *********************************************************************************************************
 *                                                main
 *********************************************************************************************************
 */
 
-// main()->AppTaskStart()->AppTaskCreate() �닚�쑝濡� �샇異�
-// AppTaskCreate()�뿉�꽌 紐⑤뱺 �깭�뒪�겕 �젙�쓽
+// main()->AppTaskStart()->AppTaskCreate()
 
 int main(void)
 {
@@ -415,7 +462,7 @@ int main(void)
   Mem_Init();
   Math_Init();
 
-  // �쁽�옱 �떆媛꾧낵 �븣�엺 �슱由� �떆媛� �꽕�젙
+  // set current & alram time
   RTC_CustomInit();
   RTC_CustomSetTime(8, 59, 55);
   RTC_SetAlarmDaily();
@@ -456,7 +503,6 @@ static void AppTaskStart(void *p_arg)
 
   (void)p_arg;
 
-  // HW 珥덇린�솕
   BSP_Init();
   BSP_Tick_Init();
 
@@ -464,7 +510,8 @@ static void AppTaskStart(void *p_arg)
   TouchSensor_Init();
   KnockSensor_Init();
   Buzzer_Init();
-  // �뿬湲� 議곗씠�뒪�떛,踰꾪듉 珥덇린�솕 �븿�닔 異붽�
+  JoyStick_Init();
+  Button_Init();
 
 #if OS_CFG_STAT_TASK_EN > 0u
   OSStatTaskCPUUsageInit(&err);
@@ -485,71 +532,153 @@ static void ApptaskCreate(void *p_arg)
   BSP_Init();
   BSP_Tick_Init();
 
-  // �깭�뒪�겕 異붽�
+  // touch sensor task create
+  OSTaskCreate(&TCB_Touch,
+               "Touch Sensor Task",
+               TouchSensorTask,
+               0,
+               TOUCH_TASK_PRIO,
+               &STK_Touch[0],
+               TOUCH_TASK_STK_SIZE / 10,
+               TOUCH_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // knock sensor task create
+  OSTaskCreate(&TCB_Knock,
+               "Knock Sensor Task",
+               KnockSensorTask,
+               0,
+               KNOCK_TASK_PRIO,
+               &STK_Knock[0],
+               KNOCK_TASK_STK_SIZE / 10,
+               KNOCK_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // buzzer task create
+  OSTaskCreate(&TCB_Buzzer,
+               "Buzzer Task",
+               BuzzerTask,
+               0,
+               BUZZER_TASK_PRIO,
+               &STK_Buzzer[0],
+               BUZZER_TASK_STK_SIZE / 10,
+               BUZZER_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // alarm task create
+  OSTaskCreate(&TCB_Alarm,
+               "Alarm Task",
+               AlarmTask,
+               0,
+               ALARM_TASK_PRIO,
+               &STK_Alarm[0],
+               ALARM_TASK_STK_SIZE / 10,
+               ALARM_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // USART task create
+  OSTaskCreate(&TCB_USART,
+               "USART Task",
+               USARTTask,
+               0,
+               USART_TASK_PRIO,
+               &STK_USART[0],
+               USART_TASK_STK_SIZE / 10,
+               USART_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
 }
 
-//joystick task
-void JoystickTaskStart(void *p_arg) {
-	OS_ERR err;
-	BSP_Init();
-	BSP_Tick_Init();
-	USART_Config();
-	Joystick_InitConfig();
+// joystick task
+static void JoystickTask(void *p_arg)
+{
+  OS_ERR err;
 
-    uint16_t joystickX, joystickY;
-    char buffer[50];
-    srand(time(NULL));
-    int random_number = rand() % 5 + 1;
-    int pattern[5][4]={{1, 2, 3, 4},{1, 2, 4, 3},{1, 3, 2, 4},{1, 3, 4, 2},{1, 4, 2, 3}};
-    left = pattern[random_number][0];
-    right = pattern[random_number][1];
-    up = pattern[random_number][2];
-    down = pattern[random_number][3];
+  uint16_t joystickX, joystickY;
+  char buffer[50];
+  srand(time(NULL));
+  int random_number = rand() % 5 + 1;
+  int pattern[5][4] = {{1, 2, 3, 4}, {1, 2, 4, 3}, {1, 3, 2, 4}, {1, 3, 4, 2}, {1, 4, 2, 3}};
+  left = pattern[random_number][0];
+  right = pattern[random_number][1];
+  up = pattern[random_number][2];
+  down = pattern[random_number][3];
 
-    while (1) {
-        joystickX = ReadJoystickX();
-        joystickY = ReadJoystickY();
+  while (1)
+  {
+    joystickX = JoyStick_ReadX();
+    joystickY = JoyStick_ReadY();
 
-        // UART로 출력
-        sprintf(buffer, "X: %d, Y: %d\n", joystickX*7, joystickY);
+    // UART로 출력
+    sprintf(buffer, "X: %d, Y: %d\n", joystickX * 7, joystickY);
 
-        if((joystickX*7 >300 && joystickX*7 <600) && (joystickY >1000 && joystickY<3000)){
-        	send_string("\r\n");
-        }
-        else if(joystickX*7 > 1000){
-        	right -=1;
-        	if (right < 0){
-        		right = 0;
-        	}
-        }
-        else if(joystickX*7 < 100){
-        	left -=1;
-        	if(left <0){
-        		left =0;
-        	}
-        }
-        else if( joystickY >3000){
-        	up-=1;
-        	if(up<0){
-        		up =0;
-        	}
-        }
-        else{
-        	down-=1;
-        	if(down<0){
-        		down=0;
-        	}
-        }
-        sprintf(buffer, "left: %d right: %d up: %d down: %d\r\n", left, right, up, down);
-		send_string(buffer);
-
-		if (left == 0 && right == 0 && up == 0 && down == 0) {
-           break;
-		 }
-        if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_12) == SET) {
-            send_string("Button Pressed\n");
-        }
-
-        OSTimeDly(200, OS_OPT_TIME_PERIODIC, &err);
+    if ((joystickX * 7 > 300 && joystickX * 7 < 600) && (joystickY > 1000 && joystickY < 3000))
+    {
+      send_string("\r\n");
     }
+    else if (joystickX * 7 > 1000)
+    {
+      right -= 1;
+      if (right < 0)
+      {
+        right = 0;
+      }
+    }
+    else if (joystickX * 7 < 100)
+    {
+      left -= 1;
+      if (left < 0)
+      {
+        left = 0;
+      }
+    }
+    else if (joystickY > 3000)
+    {
+      up -= 1;
+      if (up < 0)
+      {
+        up = 0;
+      }
+    }
+    else
+    {
+      down -= 1;
+      if (down < 0)
+      {
+        down = 0;
+      }
+    }
+    sprintf(buffer, "left: %d right: %d up: %d down: %d\r\n", left, right, up, down);
+    send_string(buffer);
+
+    if (left == 0 && right == 0 && up == 0 && down == 0)
+    {
+      break;
+    }
+    if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_12) == SET)
+    {
+      send_string("Button Pressed\n");
+    }
+
+    OSTimeDly(200, OS_OPT_TIME_PERIODIC, &err);
+  }
 }
