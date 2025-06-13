@@ -44,34 +44,38 @@
 #define BUZZER_TASK_PRIO 3u
 #define BUZZER_TASK_STK_SIZE 512u
 
-// alarm
-#define ALARM_TASK_PRIO 4u
-#define ALARM_TASK_STK_SIZE 512u
-
 // touch sensor
-#define TOUCH_TASK_PRIO 5u
+#define TOUCH_TASK_PRIO 4u
 #define TOUCH_TASK_STK_SIZE 512u
 
 // mission
-#define MISSION_TASK_PRIO 6u
+#define MISSION_TASK_PRIO 5u
 #define MISSION_TASK_STK_SIZE 512u
 
 // knock sensor
-#define KNOCK_TASK_PRIO 7u
+#define KNOCK_TASK_PRIO 6u
 #define KNOCK_TASK_STK_SIZE 512u
 
 // joystick
-#define JOYSTICK_PRIO 7u
+#define JOYSTICK_PRIO 6u
 #define JOYSTICK_STK_SIZE 512u
 
 // button
-#define BUTTON_TASK_PRIO 7u
+#define BUTTON_TASK_PRIO 6u
 #define BUTTON_TAASK_STK_SIZE 512u
 
 // USART
-#define USART_TASK_PRIO 8u
+#define USART_TASK_PRIO 7u
 #define USART_TASK_STK_SIZE 512u
 //-------------------------------------------------------------------------
+
+#define JOYSTICK_X_PIN GPIO_Pin_3   // PA0
+#define JOYSTICK_Y_PIN GPIO_Pin_7   // PA7
+#define JOYSTICK_SW_PIN GPIO_Pin_12 // PC13 (SW 버튼)
+
+#define ALARM_FLAG_START 0x01u       // 알람 발생
+#define ALARM_FLAG_OFF 0x02u         // 미션 성공 → 알람 종료
+#define ALARM_FLAG_TOUCH_READY 0x04u // 터치 센서 → 게임 시작
 
 /*
 *********************************************************************************************************
@@ -91,8 +95,30 @@ typedef struct
   int joystick_dir; // 1 = left, 2 = right, 3 = up, 4 = down
 } Mission;
 
+// Mission missions[] = {
+//     {2, 1, 1}, {1, 2, 4}, {2, 2, 2}, {3, 1, 3}, {1, 1, 4}};
+
+// 진동 감지 센서만 test
 Mission missions[] = {
-    {2, 1, 1}, {1, 2, 4}, {2, 2, 2}, {3, 1, 3}, {1, 1, 4}};
+    {0, 1, 0}, // 노크 1회만 수행
+    {0, 2, 0}, // 노크 2회
+    {0, 3, 0}  // 노크 3회
+};
+
+typedef enum
+{
+  SENSOR_BUTTON,
+  SENSOR_KNOCK,
+  SENSOR_JOYSTICK_LEFT,
+  SENSOR_JOYSTICK_RIGHT,
+  SENSOR_JOYSTICK_UP,
+  SENSOR_JOYSTICK_DOWN
+} SensorType;
+
+typedef struct
+{
+  SensorType type;
+} SensorInput;
 
 /*
 *********************************************************************************************************
@@ -140,13 +166,13 @@ void Button_delay(uint32_t ms);
 
 //-------------------------------task--------------------------------------
 static void BuzzerTask(void *p_arg);      // PRIO 3
-static void AlarmTask(void *p_arg);       // PRIO 4
-static void TouchSensorTask(void *p_arg); // PRIO 5
-static void MissionTask(void *p_arg);     // PRIO 6
-static void KnockSensorTask(void *p_arg); // PRIO 7
-static void JoystickTask(void *p_arg);    // PRIO 7
-static void ButtonTask(void *p_arg);      // PRIO 7
-static void USARTTask(void *p_arg);       // PRIO 8
+static void TouchSensorTask(void *p_arg); // PRIO 4
+static void MissionTask(void *p_arg);     // PRIO 5
+// 미션 입력 센서 3개 같은 순위
+static void KnockSensorTask(void *p_arg); // PRIO 6
+static void JoystickTask(void *p_arg);    // PRIO 6
+static void ButtonTask(void *p_arg);      // PRIO 6
+static void USARTTask(void *p_arg);       // PRIO 7
 
 // 기타 필수 Task
 static void AppTaskStart(void *p_arg);
@@ -167,16 +193,12 @@ char current_time[16] = {0};
 char input_buffer[32];
 uint8_t input_index = 0;
 uint8_t is_target_set = 0;
-volatile uint8_t alarm_flag = 0; // bsp_int.c
+// volatile uint8_t alarm_flag = 0; // bsp_int.c
 
 //-----------------------------TCB & STACK ---------------------------------
 // buzzer
 static OS_TCB TCB_Buzzer;
 static CPU_STK STK_Buzzer[BUZZER_TASK_STK_SIZE];
-
-// alram
-static OS_TCB TCB_Alarm;
-static CPU_STK STK_Alarm[ALARM_TASK_STK_SIZE];
 
 // touch sensor
 static OS_TCB TCB_Touch;
@@ -203,6 +225,10 @@ static CPU_STK STK_Button[USART_TASK_STK_SIZE];
 static OS_TCB TCB_USART;
 static CPU_STK STK_USART[USART_TASK_STK_SIZE];
 //-------------------------------------------------------------------------
+
+OS_FLAG_GRP AlarmFlagGroup; // 알람 이벤트 플래그
+OS_Q SensorInputQ;          // input 센서 입력 큐로 처리
+OS_Q USARTMsgQ;             // usart 출력 메시지 큐로 처리
 
 /*
 *********************************************************************************************************
@@ -384,27 +410,35 @@ void RTC_GetTimeStr(char *buf, size_t len)
 
 void RTC_SetAlarmDaily(void)
 {
+  // 1. 알람 인터럽트 비활성화 & 플래그 클리어
   RTC_AlarmCmd(RTC_Alarm_A, DISABLE);
-
-  EXTI_InitTypeDef EXTI_InitStruct;
+  RTC_ClearITPendingBit(RTC_IT_ALRA);
   EXTI_ClearITPendingBit(EXTI_Line17);
+
+  // 2. 외부 인터럽트 설정 (RTC 알람용 EXTI17)
+  EXTI_InitTypeDef EXTI_InitStruct;
   EXTI_InitStruct.EXTI_Line = EXTI_Line17;
   EXTI_InitStruct.EXTI_Mode = EXTI_Mode_Interrupt;
   EXTI_InitStruct.EXTI_Trigger = EXTI_Trigger_Rising;
   EXTI_InitStruct.EXTI_LineCmd = ENABLE;
   EXTI_Init(&EXTI_InitStruct);
 
+  // 3. 알람 시간 설정 (매일 09:00:00)
   RTC_AlarmTypeDef alarm;
   alarm.RTC_AlarmTime.RTC_Hours = 9;
   alarm.RTC_AlarmTime.RTC_Minutes = 0;
   alarm.RTC_AlarmTime.RTC_Seconds = 0;
-  alarm.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay;
-  alarm.RTC_AlarmDateWeekDay = 1;
+  alarm.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay; // 날짜 무시
+  alarm.RTC_AlarmDateWeekDay = 1;                  // 무시됨
   alarm.RTC_AlarmDateWeekDaySel = RTC_AlarmDateWeekDaySel_Date;
 
   RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
+
+  // 4. 인터럽트 설정 및 알람 켜기
   RTC_ITConfig(RTC_IT_ALRA, ENABLE);
   RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
+
+  // 5. NVIC 등록
   NVIC_EnableIRQ(RTC_Alarm_IRQn);
 }
 
@@ -425,14 +459,14 @@ static uint8_t KnockSensor_Read(void)
 *********************************************************************************************************
 */
 
-void Buzzer_On(void)
-{
-  GPIO_SetBits(GPIOA, GPIO_Pin_5);
-}
-
-void Buzzer_Off(void)
+void Buzzer_On(void) // LOW에서 ON
 {
   GPIO_ResetBits(GPIOA, GPIO_Pin_5);
+}
+
+void Buzzer_Off(void) //// HIGH에서 OFF
+{
+  GPIO_SetBits(GPIOA, GPIO_Pin_5);
 }
 
 /*
@@ -499,6 +533,14 @@ int main(void)
   RTC_CustomSetTime(8, 59, 55);
   RTC_SetAlarmDaily();
 
+  // 현재 시각 UART로 출력 (디버깅용)
+  char buf[32];
+  RTC_GetTimeStr(buf, sizeof(buf));
+  USART_Config(); // 반드시 먼저 USART 초기화하고
+  USART_SendString("\r\n[현재 시각] ");
+  USART_SendString(buf);
+  USART_SendString("\r\n");
+
   /* OS Init */
   OSInit(&err);
 
@@ -535,15 +577,24 @@ static void AppTaskStart(void *p_arg)
 
   (void)p_arg;
 
+  // HW INIT
   BSP_Init();
   BSP_Tick_Init();
-
   Buzzer_Init();
-  TouchSensor_Init();
-  KnockSensor_Init();
-  JoyStick_Init();
-  Button_Init();
+  // TouchSensor_Init();
+  //  KnockSensor_Init();
+  //  JoyStick_Init();
+  //  Button_Init();
   USART_Config();
+
+  Buzzer_Off();
+
+  // Alarm Flag create
+  OSFlagCreate(&AlarmFlagGroup, "Alarm Flag Group", (OS_FLAGS)0, &err);
+  // Usart Message Queue create
+  OSQCreate(&USARTMsgQ, "USART Msg Queue", 10, &err);
+  // Sensor Input Queue create
+  OSQCreate(&SensorInputQ, "Sensor Input Queue", 10, &err);
 
 #if OS_CFG_STAT_TASK_EN > 0u
   OSStatTaskCPUUsageInit(&err);
@@ -576,97 +627,82 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-  // alarm task create (PRIO 4)
-  OSTaskCreate(&TCB_Alarm,
-               "Alarm Task",
-               AlarmTask,
-               0,
-               ALARM_TASK_PRIO,
-               &STK_Alarm[0],
-               ALARM_TASK_STK_SIZE / 10,
-               ALARM_TASK_STK_SIZE,
-               0,
-               0,
-               0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-               &err);
+  //  // touch sensor task create (PRIO 4)
+  //  OSTaskCreate(&TCB_Touch,
+  //               "Touch Sensor Task",
+  //               TouchSensorTask,
+  //               0,
+  //               TOUCH_TASK_PRIO,
+  //               &STK_Touch[0],
+  //               TOUCH_TASK_STK_SIZE / 10,
+  //               TOUCH_TASK_STK_SIZE,
+  //               0,
+  //               0,
+  //               0,
+  //               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+  //               &err);
+  //
+  //  // mission task create (PRIO 5)
+  //  OSTaskCreate(&TCB_Mission,
+  //               "Mission Task",
+  //               MissionTask,
+  //               0,
+  //               MISSION_TASK_PRIO,
+  //               &STK_Mission[0],
+  //               MISSION_TASK_STK_SIZE / 10,
+  //               MISSION_TASK_STK_SIZE,
+  //               0,
+  //               0,
+  //               0,
+  //               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+  //               &err);
 
-  // touch sensor task create (PRIO 5)
-  OSTaskCreate(&TCB_Touch,
-               "Touch Sensor Task",
-               TouchSensorTask,
-               0,
-               TOUCH_TASK_PRIO,
-               &STK_Touch[0],
-               TOUCH_TASK_STK_SIZE / 10,
-               TOUCH_TASK_STK_SIZE,
-               0,
-               0,
-               0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-               &err);
+  // knock sensor task create (PRIO 6)
+  // OSTaskCreate(&TCB_Knock,
+  //              "Knock Sensor Task",
+  //              KnockSensorTask,
+  //              0,
+  //              KNOCK_TASK_PRIO,
+  //              &STK_Knock[0],
+  //              KNOCK_TASK_STK_SIZE / 10,
+  //              KNOCK_TASK_STK_SIZE,
+  //              0,
+  //              0,
+  //              0,
+  //              OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+  //              &err);
 
-  // mission task create (PRIO 6)
-  OSTaskCreate(&TCB_Mission,
-               "Mission Task",
-               MissionTask,
-               0,
-               MISSION_TASK_PRIO,
-               &STK_Mission[0],
-               MISSION_TASK_STK_SIZE / 10,
-               MISSION_TASK_STK_SIZE,
-               0,
-               0,
-               0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-               &err);
+  // joystick task create (PRIO 6)
+  // OSTaskCreate(&TCB_Joystick,
+  //              "Joystick Task",
+  //              JoystickTask,
+  //              0,
+  //              JOYSTICK_PRIO,
+  //              &STK_Joystick[0],
+  //              JOYSTICK_STK_SIZE / 10,
+  //              JOYSTICK_STK_SIZE,
+  //              0,
+  //              0,
+  //              0,
+  //              OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+  //              &err);
 
-  // knock sensor task create (PRIO 7)
-  OSTaskCreate(&TCB_Knock,
-               "Knock Sensor Task",
-               KnockSensorTask,
-               0,
-               KNOCK_TASK_PRIO,
-               &STK_Knock[0],
-               KNOCK_TASK_STK_SIZE / 10,
-               KNOCK_TASK_STK_SIZE,
-               0,
-               0,
-               0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-               &err);
+  // button task create (PRIO 6)
+  // OSTaskCreate(&TCB_Button,
+  //              "Button Task",
+  //              ButtonTask,
+  //              0,
+  //              BUTTON_TASK_PRIO,
+  //              &STK_Button[0],
+  //              BUTTON_TASK_STK_SIZE / 10,
+  //              BUTTON_TASK_STK_SIZE,
+  //              0,
+  //              0,
+  //              0,
+  //              OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+  //              &err);
 
-  // joystick task create (PRIO 7)
-  OSTaskCreate(&TCB_Joystick,
-               "Joystick Task",
-               JoystickTask,
-               0,
-               JOYSTICK_PRIO,
-               &STK_Joystick[0],
-               JOYSTICK_STK_SIZE / 10,
-               JOYSTICK_STK_SIZE,
-               0,
-               0,
-               0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-               &err);
-
-  // button task create (PRIO 7)
-  OSTaskCreate(&TCB_Button,
-               "Button Task",
-               ButtonTask,
-               0,
-               BUTTON_TASK_PRIO,
-               &STK_Button[0],
-               BUTTON_TASK_STK_SIZE / 10,
-               BUTTON_TASK_STK_SIZE,
-               0,
-               0,
-               0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-               &err);
-
-  // USART task create (PRIO 8)
+  // USART task create (PRIO 7)
   OSTaskCreate(&TCB_USART,
                "USART Task",
                USARTTask,
@@ -682,77 +718,54 @@ static void ApptaskCreate(void *p_arg)
                &err);
 }
 
-// joystick task
-static void JoystickTask(void *p_arg)
+// Buzzer Task
+static void BuzzerTask(void *p_arg)
 {
   OS_ERR err;
+  OS_FLAGS flags;
 
-  uint16_t joystickX, joystickY;
-  char buffer[50];
-  srand(time(NULL));
-  int random_number = rand() % 5 + 1;
-  int pattern[5][4] = {{1, 2, 3, 4}, {1, 2, 4, 3}, {1, 3, 2, 4}, {1, 3, 4, 2}, {1, 4, 2, 3}};
-  left = pattern[random_number][0];
-  right = pattern[random_number][1];
-  up = pattern[random_number][2];
-  down = pattern[random_number][3];
+  (void)p_arg;
 
-  while (1)
+  while (DEF_TRUE)
   {
-    joystickX = JoyStick_ReadX();
-    joystickY = JoyStick_ReadY();
+    // 1. 알람 발생까지 대기 (알람 ON 신호 올 때까지 무한대기)
+    flags = OSFlagPend(&AlarmFlagGroup,
+                       ALARM_FLAG_START,
+                       0,
+                       OS_OPT_PEND_FLAG_SET_ANY + OS_OPT_PEND_BLOCKING,
+                       0,
+                       &err);
 
-    // UART로 출력
-    sprintf(buffer, "X: %d, Y: %d\n", joystickX * 7, joystickY);
+    // 2. 부저 울림 반복 (알람 OFF 신호 올 때까지)
+    static const char msg_on[] = "\r\n[부저] 알람이 울리는 중... 미션을 수행하세요!\r\n";
+    OSQPost(&USARTMsgQ, (void *)msg_on, sizeof(msg_on), OS_OPT_POST_FIFO, &err);
 
-    if ((joystickX * 7 > 300 && joystickX * 7 < 600) && (joystickY > 1000 && joystickY < 3000))
+    while (DEF_TRUE)
     {
-      USART_SendString("\r\n");
-    }
-    else if (joystickX * 7 > 1000)
-    {
-      right -= 1;
-      if (right < 0)
+      // 깜빡임 효과 (비프 ON)
+      Buzzer_On();
+      OSTimeDlyHMSM(0, 0, 0, 500, OS_OPT_TIME_HMSM_STRICT, &err); // 0.3초 ON
+
+      // 깜빡임 효과 (비프 OFF)
+      Buzzer_Off();
+      OSTimeDlyHMSM(0, 0, 0, 500, OS_OPT_TIME_HMSM_STRICT, &err); // 0.2초 OFF
+
+      // 알람 OFF 신호가 들어왔는지 체크
+      if (OSFlagPend(&AlarmFlagGroup,
+                     ALARM_FLAG_OFF,
+                     0,
+                     OS_OPT_PEND_FLAG_SET_ANY + OS_OPT_PEND_NON_BLOCKING,
+                     0,
+                     &err))
       {
-        right = 0;
+        // 바로 종료 (알람 OFF)
+        break;
       }
     }
-    else if (joystickX * 7 < 100)
-    {
-      left -= 1;
-      if (left < 0)
-      {
-        left = 0;
-      }
-    }
-    else if (joystickY > 3000)
-    {
-      up -= 1;
-      if (up < 0)
-      {
-        up = 0;
-      }
-    }
-    else
-    {
-      down -= 1;
-      if (down < 0)
-      {
-        down = 0;
-      }
-    }
-    sprintf(buffer, "left: %d right: %d up: %d down: %d\r\n", left, right, up, down);
-    USART_SendString(buffer);
 
-    if (left == 0 && right == 0 && up == 0 && down == 0)
-    {
-      break;
-    }
-    if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_12) == SET)
-    {
-      USART_SendString("Button Pressed\n");
-    }
-
-    OSTimeDly(200, OS_OPT_TIME_PERIODIC, &err);
+    // 3. 부저 완전히 종료
+    Buzzer_Off();
+    static const char msg_off[] = "[부저] 알람이 해제되었습니다.\r\n";
+    OSQPost(&USARTMsgQ, (void *)msg_off, sizeof(msg_off), OS_OPT_POST_FIFO, &err);
   }
 }

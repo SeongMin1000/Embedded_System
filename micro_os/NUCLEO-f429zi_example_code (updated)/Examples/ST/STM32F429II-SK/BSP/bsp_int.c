@@ -37,8 +37,7 @@
 #include <bsp.h>
 #include <includes.h>
 #include <stm32f4xx.h>
-
-extern volatile uint8_t alarm_flag;
+#include "os.h"
 
 /*
 *********************************************************************************************************
@@ -485,13 +484,23 @@ static void BSP_IntHandlerDummy(void) {}
 */
 
 // rtc alarm handler 재정의
-// 세팅 시간에 이르면 alaram_flag 1로 설정
+extern OS_FLAG_GRP AlarmFlagGroup; // app.c에 선언
+#define ALARM_FLAG_START 0x01u     // 알람 시작 신호 공유
+
+// RTC 인터럽트 핸들러
 void BSP_IntHandlerRTCAlarm(void)
 {
+  OS_ERR err;
+
   if (RTC_GetITStatus(RTC_IT_ALRA) != RESET)
   {
     RTC_ClearITPendingBit(RTC_IT_ALRA);
     EXTI_ClearITPendingBit(EXTI_Line17);
-    alarm_flag = 1;
+
+    // 알람 시간되면 flag post
+    OSFlagPost(&AlarmFlagGroup,
+               ALARM_FLAG_START,
+               OS_OPT_POST_FLAG_SET,
+               &err);
   }
 }
