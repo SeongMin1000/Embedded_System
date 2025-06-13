@@ -64,27 +64,34 @@ void RTC_Init(void);
 static void TouchSensor_Init(void);
 static void KnockSensor_Init(void);
 void Buzzer_Init(void);
+// 여기에 버튼이랑 조이스틱 초기화 함수 추가
 
-// USART 관련
+// USART utils
 static void USART_SendChar(uint8_t c);
 static void USART_SendString(const char *s);
 
-// RTC 관련
+// RTC utils
 void RTC_SetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
 void RTC_GetTimeStr(char *buf, size_t len);
 void RTC_SetAlarmDaily(void);
 
-// touch sensor 관련
+// touch sensor utils
 
-// knock sensor 관련
+// knock sensor utils
 static uint8_t KnockSensor_Read(void);
 
-// buzzer 관련
+// buzzer utils
 void Buzzer_On(void);
 void Buzzer_Off(void);
 
+// joystick utils
+// 여기에 조이스틱 활용 관련 함수 추가
+
+// button utils
+// 여기에 버튼 활용 관련 함수 추가
+
 // Task
-static void Task_Start(void *p_arg);
+static void ApptaskCreate(void *p_arg);
 
 /*
 *********************************************************************************************************
@@ -308,30 +315,68 @@ void Buzzer_Off(void)
 
 /*
 *********************************************************************************************************
+*                                           JOYSTICK FUNCTIONS
+*********************************************************************************************************
+*/
+
+/*
+*********************************************************************************************************
+*                                           BUTTON FUNCTIONS
+*********************************************************************************************************
+*/
+
+/*
+*********************************************************************************************************
 *                                                main
 *********************************************************************************************************
 */
 
+// main()->AppTaskStart()->AppTaskCreate() 순으로 호출
+// AppTaskCreate()에서 모든 태스크 정의
+
 int main(void)
 {
   OS_ERR err;
-  CPU_Init();
-  OSInit(&err);
 
+  /* Basic Init */
+  RCC_DeInit();
+  //    SystemCoreClockUpdate();
+  Setup_Gpio();
+
+  /* BSP Init */
+  BSP_IntDisAll();
+
+  CPU_Init();
+  Mem_Init();
+  Math_Init();
+
+  // 현재 시간과 알람 울릴 시간 설정
   RTC_Init();
   RTC_SetTime(8, 59, 55);
   RTC_SetAlarmDaily();
 
-  OSTaskCreate(&TCB_Start, "Start", Task_Start, 0, START_PRIO, &STK_Start[0],
-               START_STK_SIZE / 10, START_STK_SIZE, 0, 0, 0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR, &err);
+  /* OS Init */
+  OSInit(&err);
 
-  RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
-  NVIC_EnableIRQ(RTC_Alarm_IRQn);
-  OSStart(&err);
+  OSTaskCreate((OS_TCB *)&AppTaskStartTCB,
+               (CPU_CHAR *)"App Task Start",
+               (OS_TASK_PTR)AppTaskStart,
+               (void *)0u,
+               (OS_PRIO)APP_CFG_ApptaskCreate_PRIO,
+               (CPU_STK *)&AppTaskStartStk[0u],
+               (CPU_STK_SIZE)AppTaskStartStk[APP_CFG_ApptaskCreate_STK_SIZE / 10u],
+               (CPU_STK_SIZE)APP_CFG_ApptaskCreate_STK_SIZE,
+               (OS_MSG_QTY)0u,
+               (OS_TICK)0u,
+               (void *)0u,
+               (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
+               (OS_ERR *)&err);
 
-  while (1)
-    ; // should never reach
+  OSStart(&err); /* Start multitasking (i.e. give control to uC/OS-III). */
+
+  (void)&err;
+
+  return (0u);
 }
 
 /*
@@ -340,11 +385,13 @@ int main(void)
 *********************************************************************************************************
 */
 
-static void Task_Start(void *p_arg)
+static void AppTaskStart(void *p_arg)
 {
   OS_ERR err;
+
   (void)p_arg;
 
+  // HW 초기화
   BSP_Init();
   BSP_Tick_Init();
 
@@ -352,19 +399,27 @@ static void Task_Start(void *p_arg)
   TouchSensor_Init();
   KnockSeonsor_Init();
   Buzzer_Init();
+  // 여기 조이스틱,버튼 초기화 함수 추가
 
-  while (DEF_TRUE)
-  {
-    RTC_GetTimeStr(current_time, sizeof(current_time));
-    USART_SendString(current_time);
-    USART_SendString("\r\n");
+#if OS_CFG_STAT_TASK_EN > 0u
+  OSStatTaskCPUUsageInit(&err);
+#endif
 
-    if (alarm_flag)
-    {
-      USART_SendString("\r\n!!! ALARM !!!\r\n");
-      alarm_flag = 0;
-    }
+#ifdef CPU_CFG_INT_DIS_MEAS_EN
+  CPU_IntDisMeasMaxCurReset();
+#endif
 
-    OSTimeDlyHMSM(0, 0, 1, 0, OS_OPT_TIME_HMSM_STRICT, &err);
-  }
+  APP_TRACE_DBG(("Creating Application Tasks\n\r"));
+  AppTaskCreate();
+}
+
+static void ApptaskCreate(void *p_arg)
+{
+  OS_ERR err;
+  (void)p_arg;
+
+  BSP_Init();
+  BSP_Tick_Init();
+
+  // 태스크 추가
 }
