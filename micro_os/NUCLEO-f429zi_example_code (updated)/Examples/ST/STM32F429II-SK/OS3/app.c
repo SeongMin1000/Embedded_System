@@ -49,7 +49,7 @@
 #define TOUCH_TASK_STK_SIZE 512u
 
 // knock sensor
-#define KNOCK_TASK_PRIO 6u
+#define KNOCK_TASK_PRIO 7u
 #define KNOCK_TASK_STK_SIZE 512u
 
 // buzzer
@@ -60,6 +60,10 @@
 #define JOYSTICK_PRIO 7u
 #define JOYSTICK_STK_SIZE 512u
 
+// button
+#define BUTTON_PRIO 7u
+#define BUTTON_STK_SIZE 512u
+
 // alarm
 #define ALARM_TASK_PRIO 4u
 #define ALARM_TASK_STK_SIZE 512u
@@ -67,6 +71,10 @@
 // USART
 #define USART_TASK_PRIO 8u
 #define USART_TASK_STK_SIZE 512u
+
+// mission
+#define MISSION_TASK_PRIO 6u
+#define MISSION_TASK_STK_SIZE 512u
 
 /*
 *********************************************************************************************************
@@ -79,6 +87,15 @@ typedef enum
   COM1 = 0,
   COMn
 } COM_TypeDef;
+typedef struct
+{
+  int button_count;
+  int knock_count;
+  int joystick_dir; // 1 = left, 2 = right, 3 = up, 4 = down
+} Mission;
+
+Mission missions[] = {
+    {2, 1, 1}, {1, 2, 4}, {2, 2, 2}, {3, 1, 3}, {1, 1, 4}};
 
 /*
 *********************************************************************************************************
@@ -93,8 +110,8 @@ void RTC_CustomInit(void);
 static void TouchSensor_Init(void);
 static void KnockSensor_Init(void);
 void Buzzer_Init(void);
-void JoyStick_Init(void); // joystick init
-void Button_Init(void);   // button init
+void JoyStick_Init(void);
+void Button_Init(void);
 
 // USART utils
 static void USART_SendChar(uint8_t c);
@@ -124,11 +141,14 @@ void Button_delay(uint32_t ms);
 // Task
 static void AppTaskStart(void *p_arg);
 static void ApptaskCreate(void *p_arg);
+
+static void ButtonTask(void *p_arg);
 static void TouchSensorTask(void *p_arg);
 static void KnockSensorTask(void *p_arg);
 static void BuzzerTask(void *p_arg);
 static void JoystickTask(void *p_arg);
 static void AlarmTask(void *p_arg);
+static void MissionTask(void *p_arg);
 static void USARTTask(void *p_arg);
 
 /*
@@ -164,9 +184,17 @@ static OS_TCB TCB_Joystick;
 static CPU_STK STK_Joystick[JOYSTICK_STK_SIZE];
 int left, right, up, down;
 
+// Button
+static OS_TCB TCB_Button;
+static CPU_STK STK_Button[USART_TASK_STK_SIZE];
+
 // alram
 static OS_TCB TCB_Alarm;
 static CPU_STK STK_Alarm[ALARM_TASK_STK_SIZE];
+
+// mission
+static OS_TCB TCB_Mission;
+static CPU_STK STK_Mission[MISSION_TASK_STK_SIZE];
 
 // USART
 static OS_TCB TCB_USART;
@@ -613,6 +641,36 @@ static void ApptaskCreate(void *p_arg)
                &STK_USART[0],
                USART_TASK_STK_SIZE / 10,
                USART_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // Button task create
+  OSTaskCreate(&TCB_Button,
+               "Button Task",
+               ButtonTask,
+               0,
+               BUTTON_TASK_PRIO,
+               &STK_Button[0],
+               BUTTON_TASK_STK_SIZE / 10,
+               BUTTON_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // Mission task create
+  OSTaskCreate(&TCB_Mission,
+               "Mission Task",
+               MissionTask,
+               0,
+               MISSION_TASK_PRIO,
+               &STK_Mission[0],
+               MISSION_TASK_STK_SIZE / 10,
+               MISSION_TASK_STK_SIZE,
                0,
                0,
                0,
