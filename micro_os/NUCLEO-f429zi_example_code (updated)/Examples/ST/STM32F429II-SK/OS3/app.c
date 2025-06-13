@@ -529,9 +529,6 @@ static void ApptaskCreate(void *p_arg)
   OS_ERR err;
   (void)p_arg;
 
-  BSP_Init();
-  BSP_Tick_Init();
-
   // touch sensor task create
   OSTaskCreate(&TCB_Touch,
                "Touch Sensor Task",
@@ -571,6 +568,21 @@ static void ApptaskCreate(void *p_arg)
                &STK_Buzzer[0],
                BUZZER_TASK_STK_SIZE / 10,
                BUZZER_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // joytstick task create
+  OSTaskCreate(&TCB_Joystick,
+               "Joystick Task",
+               JoystickTask,
+               0,
+               JOYSTICK_PRIO,
+               &STK_Joystick[0],
+               JOYSTICK_STK_SIZE / 10,
+               JOYSTICK_STK_SIZE,
                0,
                0,
                0,
