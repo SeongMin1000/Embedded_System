@@ -19,23 +19,11 @@ typedef enum
 } COM_TypeDef;
 
 // ---- 함수 선언 ----
-// (1) HW 초기화
 static void STM_Nucleo_COMInit(COM_TypeDef com, const USART_InitTypeDef *cfg);
 static void USART_Config(void);
-
-// (2) RTC 설정
-void RTC_Init_Config(void);
-void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
-void RTC_GetCurrentTimeString(char *buf, size_t len);
-void RTC_SetDailyAlarm(void);
-
-// (3) USART 추가
 static void send_char(uint8_t c);
 static void send_string(const char *s);
-
-// (4) Task 함수
-static void TaskStart(void *p_arg);
-static void TaskUsart(void *p_arg);
+void delay_ms(uint32_t ms);
 
 #define NUCLEO_COM1 USART3
 #define NUCLEO_COM1_CLK RCC_APB1Periph_USART3
@@ -107,12 +95,6 @@ static void send_string(const char *s)
     send_char((uint8_t)*s++);
 }
 
-
-// 함수 선언
-void USART_Config(void);
-void send_string(const char *str);
-void delay_ms(uint32_t ms);
-
 int main(void)
 {
     // PC0 GPIO 클럭 활성화
@@ -120,7 +102,7 @@ int main(void)
 
     // PC0 입력 모드 설정 (풀업)
     GPIO_InitTypeDef GPIO_InitStruct;
-    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_0;
+    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_0; //PC0 연결
     GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;
     GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;  // 내부 풀업
     GPIO_Init(GPIOC, &GPIO_InitStruct);
