@@ -497,7 +497,7 @@ void BSP_IntHandlerRTCAlarm(void)
     RTC_ClearITPendingBit(RTC_IT_ALRA);
     EXTI_ClearITPendingBit(EXTI_Line17);
 
-    // 알람 시간되면 flag post
+    // 알람 시간되면 buzzer task에 flag post
     OSFlagPost(&AlarmFlagGroup,
                ALARM_FLAG_START,
                OS_OPT_POST_FLAG_SET,

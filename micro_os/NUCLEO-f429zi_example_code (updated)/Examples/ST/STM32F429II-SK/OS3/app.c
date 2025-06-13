@@ -627,21 +627,21 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-  //  // touch sensor task create (PRIO 4)
-  //  OSTaskCreate(&TCB_Touch,
-  //               "Touch Sensor Task",
-  //               TouchSensorTask,
-  //               0,
-  //               TOUCH_TASK_PRIO,
-  //               &STK_Touch[0],
-  //               TOUCH_TASK_STK_SIZE / 10,
-  //               TOUCH_TASK_STK_SIZE,
-  //               0,
-  //               0,
-  //               0,
-  //               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-  //               &err);
-  //
+  // touch sensor task create (PRIO 4)
+  OSTaskCreate(&TCB_Touch,
+               "Touch Sensor Task",
+               TouchSensorTask,
+               0,
+               TOUCH_TASK_PRIO,
+               &STK_Touch[0],
+               TOUCH_TASK_STK_SIZE / 10,
+               TOUCH_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
   //  // mission task create (PRIO 5)
   //  OSTaskCreate(&TCB_Mission,
   //               "Mission Task",
@@ -737,7 +737,7 @@ static void BuzzerTask(void *p_arg)
                        &err);
 
     // 2. 부저 울림 반복 (알람 OFF 신호 올 때까지)
-    static const char msg_on[] = "\r\n[부저] 알람이 울리는 중... 미션을 수행하세요!\r\n";
+    static const char msg_on[] = "\r\n[부저] 알람이 울리는 중...\r\n 터치 센서를 눌러 미션을 수행하세요!\r\n";
     OSQPost(&USARTMsgQ, (void *)msg_on, sizeof(msg_on), OS_OPT_POST_FIFO, &err);
 
     while (DEF_TRUE)
@@ -767,6 +767,40 @@ static void BuzzerTask(void *p_arg)
     Buzzer_Off();
     static const char msg_off[] = "[부저] 알람이 해제되었습니다.\r\n";
     OSQPost(&USARTMsgQ, (void *)msg_off, sizeof(msg_off), OS_OPT_POST_FIFO, &err);
+  }
+}
+
+// Touch Sensor Task
+static void TouchSensorTask(void *p_arg)
+{
+  OS_ERR err;
+  uint8_t prev = 0, curr;
+
+  (void)p_arg;
+
+  while (DEF_TRUE)
+  {
+    curr = GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3); // 터치 센서 핀 (A0)
+
+    if (curr == Bit_SET && prev == Bit_RESET)
+    {
+      static const char msg[] = "[터치] 감지됨. 미션 시작!\r\n";
+      OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
+
+      // mission task에 ready flag post
+      OSFlagPost(&AlarmFlagGroup,
+                 ALARM_FLAG_TOUCH_READY,
+                 OS_OPT_POST_FLAG_SET + OS_OPT_POST_ALL,
+                 &err);
+
+      break;
+    }
+    else
+    {
+      OSTimeDlyHMSM(0, 0, 0, 50, OS_OPT_TIME_HMSM_STRICT, &err);
+    }
+
+    prev = curr;
   }
 }
 
