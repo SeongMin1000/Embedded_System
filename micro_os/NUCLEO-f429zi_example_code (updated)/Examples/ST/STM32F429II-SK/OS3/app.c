@@ -36,25 +36,29 @@
 #define NUCLEO_COM1_RX_SRC GPIO_PinSource9
 #define NUCLEO_COM1_RX_AF GPIO_AF_USART3
 
+//---------------------------PRIORITY & STACK SIZE-----------------------------
 #define APP_CFG_ApptaskCreate_PRIO 2u
 #define APP_CFG_ApptaskCreate_STK_SIZE 512u
 
-// joystick pin
-#define JOYSTICK_X_PIN GPIO_Pin_3   // PA0
-#define JOYSTICK_Y_PIN GPIO_Pin_7   // PA7
-#define JOYSTICK_SW_PIN GPIO_Pin_12 // PC13 (SW 버튼)
+// buzzer
+#define BUZZER_TASK_PRIO 3u
+#define BUZZER_TASK_STK_SIZE 512u
+
+// alarm
+#define ALARM_TASK_PRIO 4u
+#define ALARM_TASK_STK_SIZE 512u
 
 // touch sensor
 #define TOUCH_TASK_PRIO 5u
 #define TOUCH_TASK_STK_SIZE 512u
 
+// mission
+#define MISSION_TASK_PRIO 6u
+#define MISSION_TASK_STK_SIZE 512u
+
 // knock sensor
 #define KNOCK_TASK_PRIO 7u
 #define KNOCK_TASK_STK_SIZE 512u
-
-// buzzer
-#define BUZZER_TASK_PRIO 3u
-#define BUZZER_TASK_STK_SIZE 512u
 
 // joystick
 #define JOYSTICK_PRIO 7u
@@ -62,19 +66,12 @@
 
 // button
 #define BUTTON_TASK_PRIO 7u
-#define BUTTON_TASK_STK_SIZE 512u
-
-// alarm
-#define ALARM_TASK_PRIO 4u
-#define ALARM_TASK_STK_SIZE 512u
+#define BUTTON_TAASK_STK_SIZE 512u
 
 // USART
 #define USART_TASK_PRIO 8u
 #define USART_TASK_STK_SIZE 512u
-
-// mission
-#define MISSION_TASK_PRIO 6u
-#define MISSION_TASK_STK_SIZE 512u
+//-------------------------------------------------------------------------
 
 /*
 *********************************************************************************************************
@@ -103,16 +100,18 @@ Mission missions[] = {
 *********************************************************************************************************
 */
 
-// HW init
+//---------------------------------HW init---------------------------------
 static void USART_InitCOM(COM_TypeDef com, const USART_InitTypeDef *cfg);
 static void USART_Config(void);
-void RTC_CustomInit(void);
+static void RTC_CustomInit(void);
 static void TouchSensor_Init(void);
 static void KnockSensor_Init(void);
-void Buzzer_Init(void);
-void JoyStick_Init(void);
-void Button_Init(void);
+static void Buzzer_Init(void);
+static void JoyStick_Init(void);
+static void Button_Init(void);
+//-------------------------------------------------------------------------
 
+//------------------------------util function------------------------------
 // USART utils
 static void USART_SendChar(uint8_t c);
 static void USART_SendString(const char *s);
@@ -137,19 +136,22 @@ uint16_t JoyStick_ReadY(void);
 
 // button utils
 void Button_delay(uint32_t ms);
+//-------------------------------------------------------------------------
 
-// Task
+//-------------------------------task--------------------------------------
+static void BuzzerTask(void *p_arg);      // PRIO 3
+static void AlarmTask(void *p_arg);       // PRIO 4
+static void TouchSensorTask(void *p_arg); // PRIO 5
+static void MissionTask(void *p_arg);     // PRIO 6
+static void KnockSensorTask(void *p_arg); // PRIO 7
+static void JoystickTask(void *p_arg);    // PRIO 7
+static void ButtonTask(void *p_arg);      // PRIO 7
+static void USARTTask(void *p_arg);       // PRIO 8
+
+// 기타 필수 Task
 static void AppTaskStart(void *p_arg);
 static void ApptaskCreate(void *p_arg);
-
-static void ButtonTask(void *p_arg);
-static void TouchSensorTask(void *p_arg);
-static void KnockSensorTask(void *p_arg);
-static void BuzzerTask(void *p_arg);
-static void JoystickTask(void *p_arg);
-static void AlarmTask(void *p_arg);
-static void MissionTask(void *p_arg);
-static void USARTTask(void *p_arg);
+//-------------------------------------------------------------------------
 
 /*
 *********************************************************************************************************
@@ -167,17 +169,26 @@ uint8_t input_index = 0;
 uint8_t is_target_set = 0;
 volatile uint8_t alarm_flag = 0; // bsp_int.c
 
+//-----------------------------TCB & STACK ---------------------------------
+// buzzer
+static OS_TCB TCB_Buzzer;
+static CPU_STK STK_Buzzer[BUZZER_TASK_STK_SIZE];
+
+// alram
+static OS_TCB TCB_Alarm;
+static CPU_STK STK_Alarm[ALARM_TASK_STK_SIZE];
+
 // touch sensor
 static OS_TCB TCB_Touch;
 static CPU_STK STK_Touch[TOUCH_TASK_STK_SIZE];
 
+// mission
+static OS_TCB TCB_Mission;
+static CPU_STK STK_Mission[MISSION_TASK_STK_SIZE];
+
 // knock sensor
 static OS_TCB TCB_Knock;
 static CPU_STK STK_Knock[KNOCK_TASK_STK_SIZE];
-
-// buzzer
-static OS_TCB TCB_Buzzer;
-static CPU_STK STK_Buzzer[BUZZER_TASK_STK_SIZE];
 
 // joystick
 static OS_TCB TCB_Joystick;
@@ -188,17 +199,10 @@ int left, right, up, down;
 static OS_TCB TCB_Button;
 static CPU_STK STK_Button[USART_TASK_STK_SIZE];
 
-// alram
-static OS_TCB TCB_Alarm;
-static CPU_STK STK_Alarm[ALARM_TASK_STK_SIZE];
-
-// mission
-static OS_TCB TCB_Mission;
-static CPU_STK STK_Mission[MISSION_TASK_STK_SIZE];
-
 // USART
 static OS_TCB TCB_USART;
 static CPU_STK STK_USART[USART_TASK_STK_SIZE];
+//-------------------------------------------------------------------------
 
 /*
 *********************************************************************************************************
@@ -246,7 +250,7 @@ static void USART_Config(void)
 }
 
 // RTC
-void RTC_CustomInit(void)
+static void RTC_CustomInit(void)
 {
   RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
   PWR_BackupAccessCmd(ENABLE);
@@ -292,7 +296,7 @@ static void KnockSensor_Init(void)
 }
 
 // buzzer
-void Buzzer_Init(void)
+static void Buzzer_Init(void)
 {
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
 
@@ -306,7 +310,7 @@ void Buzzer_Init(void)
 }
 
 // joystick
-void JoyStick_Init(void)
+static void JoyStick_Init(void)
 {
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
   RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
@@ -327,7 +331,7 @@ void JoyStick_Init(void)
 }
 
 // button init
-void Button_Init(void)
+static Button_Init(void)
 {
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
   GPIO_InitTypeDef GPIO_InitStruct;
@@ -534,12 +538,12 @@ static void AppTaskStart(void *p_arg)
   BSP_Init();
   BSP_Tick_Init();
 
-  USART_Config();
+  Buzzer_Init();
   TouchSensor_Init();
   KnockSensor_Init();
-  Buzzer_Init();
   JoyStick_Init();
   Button_Init();
+  USART_Config();
 
 #if OS_CFG_STAT_TASK_EN > 0u
   OSStatTaskCPUUsageInit(&err);
@@ -557,37 +561,7 @@ static void ApptaskCreate(void *p_arg)
   OS_ERR err;
   (void)p_arg;
 
-  // touch sensor task create
-  OSTaskCreate(&TCB_Touch,
-               "Touch Sensor Task",
-               TouchSensorTask,
-               0,
-               TOUCH_TASK_PRIO,
-               &STK_Touch[0],
-               TOUCH_TASK_STK_SIZE / 10,
-               TOUCH_TASK_STK_SIZE,
-               0,
-               0,
-               0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-               &err);
-
-  // knock sensor task create
-  OSTaskCreate(&TCB_Knock,
-               "Knock Sensor Task",
-               KnockSensorTask,
-               0,
-               KNOCK_TASK_PRIO,
-               &STK_Knock[0],
-               KNOCK_TASK_STK_SIZE / 10,
-               KNOCK_TASK_STK_SIZE,
-               0,
-               0,
-               0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-               &err);
-
-  // buzzer task create
+  // buzzer task create (PRIO 3)
   OSTaskCreate(&TCB_Buzzer,
                "Buzzer Task",
                BuzzerTask,
@@ -602,22 +576,7 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-  // joytstick task create
-  OSTaskCreate(&TCB_Joystick,
-               "Joystick Task",
-               JoystickTask,
-               0,
-               JOYSTICK_PRIO,
-               &STK_Joystick[0],
-               JOYSTICK_STK_SIZE / 10,
-               JOYSTICK_STK_SIZE,
-               0,
-               0,
-               0,
-               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-               &err);
-
-  // alarm task create
+  // alarm task create (PRIO 4)
   OSTaskCreate(&TCB_Alarm,
                "Alarm Task",
                AlarmTask,
@@ -632,22 +591,67 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-  // USART task create
-  OSTaskCreate(&TCB_USART,
-               "USART Task",
-               USARTTask,
+  // touch sensor task create (PRIO 5)
+  OSTaskCreate(&TCB_Touch,
+               "Touch Sensor Task",
+               TouchSensorTask,
                0,
-               USART_TASK_PRIO,
-               &STK_USART[0],
-               USART_TASK_STK_SIZE / 10,
-               USART_TASK_STK_SIZE,
+               TOUCH_TASK_PRIO,
+               &STK_Touch[0],
+               TOUCH_TASK_STK_SIZE / 10,
+               TOUCH_TASK_STK_SIZE,
                0,
                0,
                0,
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-  // Button task create
+  // mission task create (PRIO 6)
+  OSTaskCreate(&TCB_Mission,
+               "Mission Task",
+               MissionTask,
+               0,
+               MISSION_TASK_PRIO,
+               &STK_Mission[0],
+               MISSION_TASK_STK_SIZE / 10,
+               MISSION_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // knock sensor task create (PRIO 7)
+  OSTaskCreate(&TCB_Knock,
+               "Knock Sensor Task",
+               KnockSensorTask,
+               0,
+               KNOCK_TASK_PRIO,
+               &STK_Knock[0],
+               KNOCK_TASK_STK_SIZE / 10,
+               KNOCK_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // joystick task create (PRIO 7)
+  OSTaskCreate(&TCB_Joystick,
+               "Joystick Task",
+               JoystickTask,
+               0,
+               JOYSTICK_PRIO,
+               &STK_Joystick[0],
+               JOYSTICK_STK_SIZE / 10,
+               JOYSTICK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // button task create (PRIO 7)
   OSTaskCreate(&TCB_Button,
                "Button Task",
                ButtonTask,
@@ -662,15 +666,15 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-  // Mission task create
-  OSTaskCreate(&TCB_Mission,
-               "Mission Task",
-               MissionTask,
+  // USART task create (PRIO 8)
+  OSTaskCreate(&TCB_USART,
+               "USART Task",
+               USARTTask,
                0,
-               MISSION_TASK_PRIO,
-               &STK_Mission[0],
-               MISSION_TASK_STK_SIZE / 10,
-               MISSION_TASK_STK_SIZE,
+               USART_TASK_PRIO,
+               &STK_USART[0],
+               USART_TASK_STK_SIZE / 10,
+               USART_TASK_STK_SIZE,
                0,
                0,
                0,
@@ -703,7 +707,7 @@ static void JoystickTask(void *p_arg)
 
     if ((joystickX * 7 > 300 && joystickX * 7 < 600) && (joystickY > 1000 && joystickY < 3000))
     {
-    	USART_SendString("\r\n");
+      USART_SendString("\r\n");
     }
     else if (joystickX * 7 > 1000)
     {
@@ -746,7 +750,7 @@ static void JoystickTask(void *p_arg)
     }
     if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_12) == SET)
     {
-    	USART_SendString("Button Pressed\n");
+      USART_SendString("Button Pressed\n");
     }
 
     OSTimeDly(200, OS_OPT_TIME_PERIODIC, &err);
