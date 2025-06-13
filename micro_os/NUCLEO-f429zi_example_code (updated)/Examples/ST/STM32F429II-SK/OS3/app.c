@@ -69,6 +69,9 @@ void RTC_SetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
 void RTC_GetTimeStr(char *buf, size_t len);
 void RTC_SetAlarmDaily(void);
 
+// touch sensor 관련
+static void GPIO_Init_TouchSensor(void);
+
 // Task
 static void Task_Start(void *p_arg);
 
@@ -151,6 +154,22 @@ void RTC_Init(void)
   RTC_InitStruct.RTC_AsynchPrediv = 0x7F;
   RTC_InitStruct.RTC_SynchPrediv = 0x0130;
   RTC_Init(&RTC_InitStruct);
+}
+
+// touch sensor
+static void GPIO_Init_TouchSensor(void);
+{
+  GPIO_InitTypeDef GPIO_InitStruct;
+
+  // GPIOA 클럭 Enable
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+  // PA3 입력으로 설정 (풀다운 사용)
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_3;      // PA3 (A0)
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;   // 입력 모드
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_DOWN; // 풀다운 설정
+
+  GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
 /*
@@ -262,6 +281,8 @@ static void Task_Start(void *p_arg)
   BSP_Init();
   BSP_Tick_Init();
   USART_Config();
+
+  GPIO_Init_TouchSensor();
 
   while (DEF_TRUE)
   {
