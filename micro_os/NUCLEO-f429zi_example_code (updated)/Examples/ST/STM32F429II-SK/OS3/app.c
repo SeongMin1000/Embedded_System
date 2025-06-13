@@ -61,8 +61,8 @@
 #define JOYSTICK_STK_SIZE 512u
 
 // button
-#define BUTTON_PRIO 7u
-#define BUTTON_STK_SIZE 512u
+#define BUTTON_TASK_PRIO 7u
+#define BUTTON_TASK_STK_SIZE 512u
 
 // alarm
 #define ALARM_TASK_PRIO 4u
@@ -703,7 +703,7 @@ static void JoystickTask(void *p_arg)
 
     if ((joystickX * 7 > 300 && joystickX * 7 < 600) && (joystickY > 1000 && joystickY < 3000))
     {
-      send_string("\r\n");
+    	USART_SendString("\r\n");
     }
     else if (joystickX * 7 > 1000)
     {
@@ -738,7 +738,7 @@ static void JoystickTask(void *p_arg)
       }
     }
     sprintf(buffer, "left: %d right: %d up: %d down: %d\r\n", left, right, up, down);
-    send_string(buffer);
+    USART_SendString(buffer);
 
     if (left == 0 && right == 0 && up == 0 && down == 0)
     {
@@ -746,7 +746,7 @@ static void JoystickTask(void *p_arg)
     }
     if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_12) == SET)
     {
-      send_string("Button Pressed\n");
+    	USART_SendString("Button Pressed\n");
     }
 
     OSTimeDly(200, OS_OPT_TIME_PERIODIC, &err);
