@@ -69,7 +69,7 @@
 #define USART_TASK_STK_SIZE 512u
 //-------------------------------------------------------------------------
 
-#define JOYSTICK_X_PIN GPIO_Pin_3   // PA0
+#define JOYSTICK_X_PIN GPIO_Pin_0   // PA0
 #define JOYSTICK_Y_PIN GPIO_Pin_7   // PA7
 #define JOYSTICK_SW_PIN GPIO_Pin_12 // PC13 (SW 버튼)
 
@@ -77,7 +77,10 @@
 #define ALARM_FLAG_TOUCH 0x02u   // 0010 (터치 센서 태스크 대기용)
 #define ALARM_FLAG_MISSION 0x04u // 0100 (미션 태스크 시작 신호)
 #define ALARM_FLAG_KNOCK 0x08u
+#define ALARM_FLAG_KNOCK_SUCCESS    0x40u
+
 #define ALARM_FLAG_OFF 0x10u // 1000
+#define ALARM_FLAG_JOYSTICK_START  0x20u
 
 /*
 *********************************************************************************************************
@@ -96,9 +99,8 @@ typedef struct
   int knock_count;
   int joystick_dir; // 1 = left, 2 = right, 3 = up, 4 = down
 } Mission;
-
-// Mission missions[] = {
-//     {2, 1, 1}, {1, 2, 4}, {2, 2, 2}, {3, 1, 3}, {1, 1, 4}};
+ Mission missionsjoy[] = {
+		 {2, 1, 1}, {1, 2, 4}, {2, 2, 2}, {3, 1, 3}, {1, 1, 4}};
 
 // 진동 감지 센서만 test
 Mission missions[] = {
@@ -480,7 +482,7 @@ void Buzzer_Off(void) //// HIGH에서 OFF
 // Read analog value
 uint16_t JoyStick_ReadX(void)
 {
-  ADC_RegularChannelConfig(ADC1, ADC_Channel_3, 1, ADC_SampleTime_15Cycles);
+  ADC_RegularChannelConfig(ADC1, ADC_Channel_0, 1, ADC_SampleTime_15Cycles);
   ADC_SoftwareStartConv(ADC1);
   while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET)
     ;
@@ -674,20 +676,20 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-  // joystick task create (PRIO 6)
-  // OSTaskCreate(&TCB_Joystick,
-  //              "Joystick Task",
-  //              JoystickTask,
-  //              0,
-  //              JOYSTICK_PRIO,
-  //              &STK_Joystick[0],
-  //              JOYSTICK_STK_SIZE / 10,
-  //              JOYSTICK_STK_SIZE,
-  //              0,
-  //              0,
-  //              0,
-  //              OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-  //              &err);
+
+   OSTaskCreate(&TCB_Joystick,
+                "Joystick Task",
+               JoystickTask,
+                0,
+                JOYSTICK_PRIO,
+                &STK_Joystick[0],
+                JOYSTICK_STK_SIZE / 10,
+                JOYSTICK_STK_SIZE,
+                0,
+                0,
+                0,
+                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+                &err);
 
   // button task create (PRIO 6)
   // OSTaskCreate(&TCB_Button,
@@ -794,12 +796,6 @@ static void TouchSensorTask(void *p_arg)
                        0,
                        &err);
 
-    OSFlagPend(&AlarmFlagGroup,
-               ALARM_FLAG_OFF,
-               0,
-               OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_NON_BLOCKING,
-               0,
-               &err);
 
     // 2. 터치센서 OFF될 때까지 대기
     while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3) == Bit_SET)
@@ -916,12 +912,18 @@ static void MissionTask(void *p_arg)
 
       if (knock_cnt >= required_knock)
       {
+
         OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
-        static const char success_msg[] = "[성공] 미션 완료! 알람이 해제됩니다.\r\n";
-        OSQPost(&USARTMsgQ, (void *)success_msg, sizeof(success_msg), OS_OPT_POST_FIFO, &err);
+        USART_SendString("[미션] 테스트 모드: 조이스틱 모듈 사용 중\r\n");
+        OSFlagPost(&AlarmFlagGroup,
+            			  ALARM_FLAG_KNOCK_SUCCESS,
+            	  					 OS_OPT_POST_FLAG_SET,
+            	  					 &err);
 
-        OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_OFF, OS_OPT_POST_FLAG_SET, &err);
 
+
+
+        /*
         // 재시작 테스트
         RTC_AlarmCmd(RTC_Alarm_A, DISABLE);
         RTC_ClearITPendingBit(RTC_IT_ALRA);
@@ -934,6 +936,7 @@ static void MissionTask(void *p_arg)
         RTC_SetAlarmDaily();
         continue;
         ;
+        */
       }
     }
 
@@ -972,13 +975,17 @@ static void KnockSensorTask(void *p_arg)
     {
       // 미션 종료 플래그 오면 바로 대기 상태로 돌아감
       if (OSFlagPend(&AlarmFlagGroup,
-                     ALARM_FLAG_OFF,
+    		  	  	  ALARM_FLAG_KNOCK_SUCCESS,
                      0,
                      OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
                      0,
                      &err))
       {
-        break;
+    	  OSFlagPost(&AlarmFlagGroup,
+    	  					 ALARM_FLAG_JOYSTICK_START,
+    	  					 OS_OPT_POST_FLAG_SET,
+    	  					 &err);
+    	  break;
       }
 
       curr = KnockSensor_Read();
@@ -1029,4 +1036,77 @@ static void USARTTask(void *p_arg)
       USART_SendString((char *)msg);
     }
   }
+}
+
+
+void JoystickTask(void *p_arg) {
+	OS_ERR err;
+	OS_FLAGS flags;
+
+	flags = OSFlagPend(&AlarmFlagGroup,
+		                       ALARM_FLAG_JOYSTICK_START,
+		                       0,
+		                       OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_BLOCKING,
+		                       0,
+		                       &err);
+
+	BSP_Init();
+	BSP_Tick_Init();
+	USART_Config();
+	JoyStick_Init();
+
+
+    uint16_t joystickX, joystickY;
+    char buffer[50];
+    srand(time(NULL));
+    int random_number = rand() % 5 + 1;
+    int pattern[5][4]={{1, 2, 3, 4},{1, 2, 4, 3},{1, 3, 2, 4},{1, 3, 4, 2},{1, 4, 2, 3}};
+    left = pattern[random_number][0];
+    right = pattern[random_number][1];
+    up = pattern[random_number][2];
+    down = pattern[random_number][3];
+
+    USART_SendString("[테스트 미션] 조이스틱 모듈을 움직이세요\r\n");
+    while (1) {
+        joystickX = JoyStick_ReadX();
+        joystickY = JoyStick_ReadY();
+
+
+        // 조이스틱 중앙값 범위 내에 있으면 방향 잔여값 출력
+        if((joystickX*7 >300 && joystickX*7 <600) && (joystickY >1000 && joystickY<3000)){
+            sprintf(buffer, "left: %d right: %d up: %d down: %d\r\n", left, right, up, down);
+            USART_SendString(buffer);
+        }
+        else if(joystickX*7 > 1000){
+            right -=1;
+            if (right < 0){
+                right = 0;
+            }
+        }
+        else if(joystickX*7 < 100){
+            left -=1;
+            if(left <0){
+                left =0;
+            }
+        }
+        else if( joystickY >3000){
+            up-=1;
+            if(up<0){
+                up =0;
+            }
+        }
+        else{
+            down-=1;
+            if(down<0){
+                down=0;
+            }
+        }
+
+        if (left == 0 && right == 0 && up == 0 && down == 0) {
+            OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_OFF, OS_OPT_POST_FLAG_SET, &err);
+            break;
+        }
+
+        OSTimeDly(100, OS_OPT_TIME_PERIODIC, &err);
+    }
 }
