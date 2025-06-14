@@ -485,7 +485,9 @@ static void BSP_IntHandlerDummy(void) {}
 
 // rtc alarm handler 재정의
 extern OS_FLAG_GRP AlarmFlagGroup; // app.c에 선언
-#define ALARM_FLAG_START 0x01u     // 알람 시작 신호 공유
+// #define ALARM_FLAG_START 0x01u     // 알람 시작 신호 공유
+#define ALARM_FLAG_BUZZER 0x01u
+#define ALARM_FLAG_TOUCH 0x02u
 
 // RTC 인터럽트 핸들러
 void BSP_IntHandlerRTCAlarm(void)
@@ -498,8 +500,19 @@ void BSP_IntHandlerRTCAlarm(void)
     EXTI_ClearITPendingBit(EXTI_Line17);
 
     // 알람 시간되면 buzzer task에 flag post
+    // OSFlagPost(&AlarmFlagGroup,
+    //            ALARM_FLAG_START,
+    //            OS_OPT_POST_FLAG_SET,
+    //            &err);
+
+    // RTC 인터럽트 핸들러
     OSFlagPost(&AlarmFlagGroup,
-               ALARM_FLAG_START,
+               ALARM_FLAG_BUZZER, // 부저에게만 신호
+               OS_OPT_POST_FLAG_SET,
+               &err);
+
+    OSFlagPost(&AlarmFlagGroup,
+               ALARM_FLAG_TOUCH, // 터치 태스크에도 신호
                OS_OPT_POST_FLAG_SET,
                &err);
   }

@@ -73,9 +73,11 @@
 #define JOYSTICK_Y_PIN GPIO_Pin_7   // PA7
 #define JOYSTICK_SW_PIN GPIO_Pin_12 // PC13 (SW 버튼)
 
-#define ALARM_FLAG_START 0x01u       // 알람 발생
-#define ALARM_FLAG_OFF 0x02u         // 미션 성공 → 알람 종료
-#define ALARM_FLAG_TOUCH_READY 0x04u // 터치 센서 → 게임 시작
+#define ALARM_FLAG_BUZZER 0x01u  // 0001
+#define ALARM_FLAG_TOUCH 0x02u   // 0010 (터치 센서 태스크 대기용)
+#define ALARM_FLAG_MISSION 0x04u // 0100 (미션 태스크 시작 신호)
+#define ALARM_FLAG_KNOCK 0x08u
+#define ALARM_FLAG_OFF 0x10u // 1000
 
 /*
 *********************************************************************************************************
@@ -530,7 +532,7 @@ int main(void)
 
   // set current & alram time
   RTC_CustomInit();
-  RTC_CustomSetTime(8, 59, 55);
+  RTC_CustomSetTime(8, 59, 58);
   RTC_SetAlarmDaily();
 
   // 현재 시각 UART로 출력 (디버깅용)
@@ -582,7 +584,7 @@ static void AppTaskStart(void *p_arg)
   BSP_Tick_Init();
   Buzzer_Init();
   TouchSensor_Init();
-  //  KnockSensor_Init();
+  KnockSensor_Init();
   //  JoyStick_Init();
   //  Button_Init();
   USART_Config();
@@ -657,20 +659,20 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-  // knock sensor task create (PRIO 6)
-  // OSTaskCreate(&TCB_Knock,
-  //              "Knock Sensor Task",
-  //              KnockSensorTask,
-  //              0,
-  //              KNOCK_TASK_PRIO,
-  //              &STK_Knock[0],
-  //              KNOCK_TASK_STK_SIZE / 10,
-  //              KNOCK_TASK_STK_SIZE,
-  //              0,
-  //              0,
-  //              0,
-  //              OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-  //              &err);
+  // knock sensor task create(PRIO 6)
+  OSTaskCreate(&TCB_Knock,
+               "Knock Sensor Task",
+               KnockSensorTask,
+               0,
+               KNOCK_TASK_PRIO,
+               &STK_Knock[0],
+               KNOCK_TASK_STK_SIZE / 10,
+               KNOCK_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
 
   // joystick task create (PRIO 6)
   // OSTaskCreate(&TCB_Joystick,
@@ -730,11 +732,18 @@ static void BuzzerTask(void *p_arg)
   {
     // 1. 알람 발생까지 대기 (알람 ON 신호 올 때까지 무한대기)
     flags = OSFlagPend(&AlarmFlagGroup,
-                       ALARM_FLAG_START,
+                       ALARM_FLAG_BUZZER,
                        0,
-                       OS_OPT_PEND_FLAG_SET_ANY + OS_OPT_PEND_BLOCKING,
+                       OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_BLOCKING,
                        0,
                        &err);
+
+    OSFlagPend(&AlarmFlagGroup,
+               ALARM_FLAG_OFF,
+               0,
+               OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_NON_BLOCKING,
+               0,
+               &err);
 
     // 2. 부저 울림 반복 (알람 OFF 신호 올 때까지)
     static const char msg_on[] = "\r\n[부저] 알람이 울리는 중...\r\n 터치 센서를 눌러 미션을 수행하세요!\r\n";
@@ -751,14 +760,10 @@ static void BuzzerTask(void *p_arg)
       OSTimeDlyHMSM(0, 0, 0, 500, OS_OPT_TIME_HMSM_STRICT, &err); // 0.2초 OFF
 
       // 알람 OFF 신호가 들어왔는지 체크
-      if (OSFlagPend(&AlarmFlagGroup,
-                     ALARM_FLAG_OFF,
-                     0,
-                     OS_OPT_PEND_FLAG_SET_ANY + OS_OPT_PEND_NON_BLOCKING,
-                     0,
-                     &err))
+      if (OSFlagPend(&AlarmFlagGroup, ALARM_FLAG_OFF, 0,
+                     OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
+                     0, &err))
       {
-        // 바로 종료 (알람 OFF)
         break;
       }
     }
@@ -783,60 +788,59 @@ static void TouchSensorTask(void *p_arg)
   {
     // 1. 알람 울림 신호 기다림
     flags = OSFlagPend(&AlarmFlagGroup,
-                       ALARM_FLAG_START,
+                       ALARM_FLAG_TOUCH,
                        0,
-                       OS_OPT_PEND_FLAG_SET_ANY + OS_OPT_PEND_BLOCKING,
+                       OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_BLOCKING,
                        0,
                        &err);
 
-    char buf[64];
-    snprintf(buf, sizeof(buf), "[TouchTask] FlagPend err=%d flags=0x%02X\r\n", err, flags);
-    USART_SendString(buf);
+    OSFlagPend(&AlarmFlagGroup,
+               ALARM_FLAG_OFF,
+               0,
+               OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_NON_BLOCKING,
+               0,
+               &err);
 
-    // 2. 터치 감지 시작 (단, 한 번만 감지)
-    prev = GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3);
+    // 2. 터치센서 OFF될 때까지 대기
+    while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3) == Bit_SET)
+    {
+      OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
+    }
+    prev = Bit_RESET;
 
-    while (DEF_TRUE)
+    // 3. 터치 감지(딱 한 번)
+    int touched = 0;
+    while (!touched)
     {
       curr = GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3);
-
       if (curr == Bit_SET && prev == Bit_RESET)
       {
-        static const char msg[] = "[터치] 감지됨. 미션 시작!\r\n";
-        OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
-
-        // mission task에 ready flag post
+        // MissionTask에 신호
         OSFlagPost(&AlarmFlagGroup,
-                   ALARM_FLAG_TOUCH_READY,
-                   OS_OPT_POST_FLAG_SET, // ALL로 넘기면 오류가 남
+                   ALARM_FLAG_MISSION,
+                   OS_OPT_POST_FLAG_SET,
                    &err);
 
-        // 3. 알람 OFF(해제)될 때까지 대기 (더 이상 터치 감지 X)
-        while (1)
-        {
-          // ALARM_FLAG_OFF 오면 break (휴식 끝)
-          if (OSFlagPend(&AlarmFlagGroup,
-                         ALARM_FLAG_OFF,
-                         0,
-                         OS_OPT_PEND_FLAG_SET_ANY + OS_OPT_PEND_BLOCKING,
-                         0,
-                         &err))
-          {
-            break;
-          }
-          OSTimeDlyHMSM(0, 0, 0, 50, OS_OPT_TIME_HMSM_STRICT, &err);
-        }
-        break; // 바깥 while(DEF_TRUE)로 복귀(즉, 알람 다시 울릴 때까지 감지 X)
+        touched = 1;
       }
-
-      // 터치 감지 전이라면, 계속 감시
       prev = curr;
       OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
     }
+
+    // 4. 알람이 해제될 때까지 Block (ALARM_FLAG_OFF 대기)
+    OSFlagPend(&AlarmFlagGroup,
+               ALARM_FLAG_OFF,
+               0,
+               OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
+               0,
+               &err);
+
+    // **여기서 break가 아니라, 자연스럽게 루프 첫 부분(1)로 돌아가야 함!**
+    // break;  <<<< 쓰면 안 됨!
+    // continue; 혹은 아무 처리 없이 while(DEF_TRUE) 첫 부분으로 돌아가게
   }
 }
 
-// Mission Task
 static void MissionTask(void *p_arg)
 {
   OS_ERR err;
@@ -849,20 +853,19 @@ static void MissionTask(void *p_arg)
 
   while (DEF_TRUE)
   {
-
     // 1. 터치 감지될 때까지 대기
     flags = OSFlagPend(&AlarmFlagGroup,
-                       ALARM_FLAG_TOUCH_READY,
+                       ALARM_FLAG_MISSION,
                        0,
-                       OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_BLOCKING,
+                       OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_BLOCKING,
                        0,
                        &err);
 
-    // 2. 미션 랜덤 선택 (여기서는 knock만 사용)
+    // 2. 미션 랜덤 선택
     int knock_missions[] = {1, 2, 3};
     int idx = rand() % (sizeof(knock_missions) / sizeof(int));
     int required_knock = knock_missions[idx];
-
+    USART_SendString("미션태스크 진입 확인\r\n");
     static const char start_msg[] = "\r\n[미션] 테스트 모드: 노크 센서만 사용 중!\r\n";
     OSQPost(&USARTMsgQ, (void *)start_msg, sizeof(start_msg), OS_OPT_POST_FIFO, &err);
 
@@ -871,66 +874,132 @@ static void MissionTask(void *p_arg)
              "[테스트 미션] 노크 %d회를 감지하세요.\r\n", required_knock);
     OSQPost(&USARTMsgQ, (void *)buf, strlen(buf) + 1, OS_OPT_POST_FIFO, &err);
 
-    int mission_success = 0; // 전체 루프용
+    OSFlagPost(&AlarmFlagGroup,
+               ALARM_FLAG_KNOCK,
+               OS_OPT_POST_FLAG_SET,
+               &err);
 
-    while (!mission_success)
+    int knock_cnt = 0;
+    int mission_fail = 0;
+
+    while (1)
     {
-      int knock_cnt = 0;
-      int mission_fail = 0;
-
-      while (1)
+      // 알람 해제 신호 오면 즉시 종료(예: 외부에서 강제 종료)
+      if (OSFlagPend(&AlarmFlagGroup,
+                     ALARM_FLAG_OFF,
+                     0,
+                     OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
+                     0,
+                     &err))
       {
-        // 미션 도중에 알람 해제 신호가 오면 바로 탈출
-        if (OSFlagPend(&AlarmFlagGroup,
-                       ALARM_FLAG_OFF,
-                       0,
-                       OS_OPT_PEND_FLAG_SET_ANY + OS_OPT_PEND_NON_BLOCKING,
-                       0,
-                       &err))
-        {
-          mission_fail = 1; // 루프 즉시 종료
-          break;
-        }
-
-        msg = OSQPend(&SensorInputQ, 0, OS_OPT_PEND_BLOCKING, &msg_size, 0, &err);
-        if (err != OS_ERR_NONE)
-          continue;
-
-        input = *(SensorInput *)msg;
-
-        if (input.type == SENSOR_KNOCK)
-        {
-          knock_cnt++;
-        }
-        else
-        {
-          mission_fail = 1;
-          static const char fail_msg[] = "[실패] 허용되지 않은 입력입니다. 다시 시도하세요.\r\n";
-          OSQPost(&USARTMsgQ, (void *)fail_msg, sizeof(fail_msg), OS_OPT_POST_FIFO, &err);
-          break;
-        }
-
-        if (knock_cnt >= required_knock)
-        {
-          static const char success_msg[] = "[성공] 미션 완료! 알람이 해제됩니다.\r\n";
-          OSQPost(&USARTMsgQ, (void *)success_msg, sizeof(success_msg), OS_OPT_POST_FIFO, &err);
-
-          OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_OFF, OS_OPT_POST_FLAG_SET, &err);
-          mission_success = 1;
-          break;
-        }
+        // 강제 종료(성공/실패 상관없이 태스크 종료)
+        return;
       }
 
-      // 성공했으면 전체 루프 탈출
-      if (mission_success)
+      msg = OSQPend(&SensorInputQ, 0, OS_OPT_PEND_BLOCKING, &msg_size, 0, &err);
+      if (err != OS_ERR_NONE)
+        continue;
+
+      input = *(SensorInput *)msg;
+
+      if (input.type == SENSOR_KNOCK)
+      {
+        knock_cnt++;
+      }
+      else
+      {
+        mission_fail = 1;
+        static const char fail_msg[] = "[실패] 허용되지 않은 입력입니다. 다시 시도하세요.\r\n";
+        OSQPost(&USARTMsgQ, (void *)fail_msg, sizeof(fail_msg), OS_OPT_POST_FIFO, &err);
+        return; // 미션 실패!
+      }
+
+      if (knock_cnt >= required_knock)
+      {
+        OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
+        static const char success_msg[] = "[성공] 미션 완료! 알람이 해제됩니다.\r\n";
+        OSQPost(&USARTMsgQ, (void *)success_msg, sizeof(success_msg), OS_OPT_POST_FIFO, &err);
+
+        OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_OFF, OS_OPT_POST_FLAG_SET, &err);
+
+        // 재시작 테스트
+        RTC_AlarmCmd(RTC_Alarm_A, DISABLE);
+        RTC_ClearITPendingBit(RTC_IT_ALRA);
+        EXTI_ClearITPendingBit(EXTI_Line17);
+
+        RTC_CustomSetTime(8, 59, 58);
+        // 꼭 50~100ms 정도 대기!
+        OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
+
+        RTC_SetAlarmDaily();
+        continue;
+        ;
+      }
+    }
+
+    // 이 아래는 “실패” 했을 때만 실행됨
+    if (mission_fail)
+    {
+      OSTimeDlyHMSM(0, 0, 0, 700, OS_OPT_TIME_HMSM_STRICT, &err); // 재도전 전 잠깐 쉬기
+      continue;                                                   // 바깥 while(DEF_TRUE)로 돌아가서 미션 새로 안내
+    }
+  }
+}
+
+// Knock sensor Task
+static void KnockSensorTask(void *p_arg)
+{
+  OS_ERR err;
+  SensorInput input;
+  OS_FLAGS flags;
+  uint8_t prev, curr;
+
+  (void)p_arg;
+
+  while (DEF_TRUE)
+  {
+    // 1. 미션 시작(터치 플래그)까지 대기
+    flags = OSFlagPend(&AlarmFlagGroup,
+                       ALARM_FLAG_KNOCK,
+                       0,
+                       OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_BLOCKING,
+                       0,
+                       &err);
+
+    // 2. 미션 종료(ALARM_FLAG_OFF)까지 반복 감지
+    prev = KnockSensor_Read();
+    while (1)
+    {
+      // 미션 종료 플래그 오면 바로 대기 상태로 돌아감
+      if (OSFlagPend(&AlarmFlagGroup,
+                     ALARM_FLAG_OFF,
+                     0,
+                     OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
+                     0,
+                     &err))
+      {
         break;
-
-      // 실패 시 재도전 안내
-      if (mission_fail)
-      {
-        OSTimeDlyHMSM(0, 0, 0, 700, OS_OPT_TIME_HMSM_STRICT, &err); // 충분히 쉬어주기
-                                                                    // 실패했으니 다시 처음으로 루프(미션 안내부터)
       }
+
+      curr = KnockSensor_Read();
+
+      if (curr == Bit_SET && prev == Bit_RESET)
+      {
+        input.type = SENSOR_KNOCK;
+        OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
+
+        static const char msg[] = "[노크] 입력 감지됨\r\n";
+        OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
+
+        // 800ms(혹은 적절한 값) 동안 입력 무시
+        OSTimeDlyHMSM(0, 0, 1, 0, OS_OPT_TIME_HMSM_STRICT, &err);
+      }
+      else
+      {
+        OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
+      }
+
+      prev = curr;
     }
   }
 }
