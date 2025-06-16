@@ -371,26 +371,38 @@ static void USART_SendString(const char *s)
 void USART_ReceiveString(char *buffer, uint16_t len)
 {
   uint16_t i = 0;
+
   while (i < len - 1)
   {
-    // 수신 대기
     while (USART_GetFlagStatus(NUCLEO_COM1, USART_FLAG_RXNE) == RESET)
       ;
 
-    char c = USART_ReceiveData(NUCLEO_COM1); // 입력 문자
+    char c = USART_ReceiveData(NUCLEO_COM1);
 
-    // 엔터 입력 시 종료: CR('\r') 또는 LF('\n')
+    // 엔터 입력 시 종료
     if (c == '\r' || c == '\n')
     {
-      USART_SendString("\r\n"); // 줄바꿈 출력
+      USART_SendString("\r\n");
       break;
     }
 
+    // 백스페이스 처리
+    if (c == '\b' || c == 127) // '\b' or DEL
+    {
+      if (i > 0)
+      {
+        i--;                       // 커서 뒤로
+        buffer[i] = '\0';          // 마지막 문자 제거
+        USART_SendString("\b \b"); // 화면에서도 지우기
+      }
+      continue;
+    }
+
     buffer[i++] = c;
-    USART_SendChar(c); // 에코 출력
+    USART_SendChar(c);
   }
 
-  buffer[i] = '\0'; // 문자열 끝에 NULL
+  buffer[i] = '\0'; // 널 종료
 }
 
 /*
