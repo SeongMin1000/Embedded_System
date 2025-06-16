@@ -63,6 +63,10 @@
 // USART
 #define USART_TASK_PRIO 7u
 #define USART_TASK_STK_SIZE 512u
+
+// time monitor
+#define TIME_MONITOR_TASK_PRIO 8u
+#define TIME_MONITOR_TASK_STK_SIZE 512u
 //-------------------------------------------------------------------------
 
 #define JOYSTICK_X_PIN GPIO_Pin_0   // PA0
@@ -132,8 +136,6 @@ void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
 void RTC_GetTimeStr(char *buf, size_t len);
 void RTC_SetAlarmDaily(void);
 
-// touch sensor utils
-
 // buzzer utils
 void Buzzer_On(void);
 void Buzzer_Off(void);
@@ -143,7 +145,6 @@ uint16_t JoyStick_ReadX(void);
 uint16_t JoyStick_ReadY(void);
 
 // button utils
-void Button_delay(uint32_t ms);
 uint8_t Button_Read(void);
 
 //-------------------------------------------------------------------------
@@ -156,6 +157,7 @@ static void MissionTask(void *p_arg);     // PRIO 5
 static void JoystickTask(void *p_arg); // PRIO 6
 static void ButtonTask(void *p_arg);   // PRIO 6
 static void USARTTask(void *p_arg);    // PRIO 7
+static void TimeMonitorTask(void *p_arg);
 
 // 기타 필수 Task
 static void AppTaskStart(void *p_arg);
@@ -174,9 +176,14 @@ static CPU_STK AppTaskStartStk[APP_CFG_ApptaskCreate_STK_SIZE];
 char target_time[16] = {0};
 char current_time[16] = {0};
 char input_buffer[32];
+
+// 알람 시각
+RTC_TimeTypeDef g_alarmTime;
+
 uint8_t input_index = 0;
 uint8_t is_target_set = 0;
 
+// 버튼, 조이스틱 미션
 volatile uint8_t random_index;
 int button_missions[3] = {1, 2, 3};
 int Joystick_missions[3][3] = {
@@ -207,6 +214,10 @@ static CPU_STK STK_Button[USART_TASK_STK_SIZE];
 // USART
 static OS_TCB TCB_USART;
 static CPU_STK STK_USART[USART_TASK_STK_SIZE];
+
+// Time Monitor Task
+static OS_TCB TCB_TimeMonitor;
+static CPU_STK STK_TimeMonitor[TIME_MONITOR_TASK_STK_SIZE];
 //-------------------------------------------------------------------------
 
 OS_FLAG_GRP AlarmFlagGroup; // 알람 이벤트 플래그
@@ -492,7 +503,7 @@ void RTC_SetAlarmDaily(void)
   USART_SendString("\r\n");
 
   char alarm_time_msg[64];
-  snprintf(alarm_time_msg, sizeof(alarm_time_msg), "%02d:%02d:%02d 에 알람이 울립니다...\r\n", hours, minutes, seconds);
+  snprintf(alarm_time_msg, sizeof(alarm_time_msg), "%02d:%02d:%02d 에 알람이 울립니다...\r\n\r\n", hours, minutes, seconds);
   USART_SendString(alarm_time_msg);
 
   RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
@@ -503,6 +514,11 @@ void RTC_SetAlarmDaily(void)
 
   // 5. NVIC 등록
   NVIC_EnableIRQ(RTC_Alarm_IRQn);
+
+  // 6. 알람 울리기 전 카운트 다운을 위한 변수 설정
+  g_alarmTime.RTC_Hours = hours;
+  g_alarmTime.RTC_Minutes = minutes;
+  g_alarmTime.RTC_Seconds = seconds;
 }
 
 /*
@@ -551,12 +567,6 @@ uint16_t JoyStick_ReadY(void)
 *                                           BUTTON FUNCTIONS
 *********************************************************************************************************
 */
-
-void Button_delay(uint32_t ms)
-{
-  for (uint32_t i = 0; i < ms * 4000; i++)
-    __NOP();
-}
 
 uint8_t Button_Read(void)
 {
@@ -745,6 +755,21 @@ static void ApptaskCreate(void *p_arg)
                &STK_USART[0],
                USART_TASK_STK_SIZE / 10,
                USART_TASK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
+
+  // Time Monitor Task (PRIO 8)
+  OSTaskCreate(&TCB_TimeMonitor,
+               "Time Monitor Task",
+               TimeMonitorTask,
+               0,
+               TIME_MONITOR_TASK_PRIO,
+               &STK_TimeMonitor[0],
+               TIME_MONITOR_TASK_STK_SIZE / 10,
+               TIME_MONITOR_TASK_STK_SIZE,
                0,
                0,
                0,
@@ -1171,5 +1196,33 @@ static void USARTTask(void *p_arg)
       // 문자열 출력
       USART_SendString((char *)msg);
     }
+  }
+}
+
+// Timer Monitor Task
+static void TimeMonitorTask(void *p_arg)
+{
+  OS_ERR err;
+  (void)p_arg;
+
+  while (DEF_TRUE)
+  {
+    RTC_TimeTypeDef now;
+    RTC_GetTime(RTC_Format_BIN, &now);
+
+    int now_sec = now.RTC_Hours * 3600 + now.RTC_Minutes * 60 + now.RTC_Seconds;
+    int alarm_sec = g_alarmTime.RTC_Hours * 3600 + g_alarmTime.RTC_Minutes * 60 + g_alarmTime.RTC_Seconds;
+
+    int remaining = alarm_sec - now_sec;
+
+    // 알람 울리기 3초 전에 시간 표시
+    if (remaining <= 3 && remaining > 0)
+    {
+      char buf[64];
+      snprintf(buf, sizeof(buf), "%02d:%02d:%02d\r\n", now.RTC_Hours, now.RTC_Minutes, now.RTC_Seconds);
+      OSQPost(&USARTMsgQ, (void *)buf, sizeof(buf), OS_OPT_POST_FIFO, &err);
+    }
+
+    OSTimeDlyHMSM(0, 0, 1, 0, OS_OPT_TIME_HMSM_STRICT, &err); // 1초 대기
   }
 }
