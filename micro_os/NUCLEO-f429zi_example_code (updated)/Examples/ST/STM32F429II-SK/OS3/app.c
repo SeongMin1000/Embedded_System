@@ -508,16 +508,16 @@ void RTC_SetAlarmDaily(void)
 
   RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
 
-  char alarm_time_msg[64];
-  snprintf(alarm_time_msg, sizeof(alarm_time_msg), "\r\n%02d:%02d:%02d 에 알람이 울립니다...\r\n", hours, minutes, seconds);
-  USART_SendString(alarm_time_msg);
-
   char buf[32];
   RTC_GetTimeStr(buf, sizeof(buf));
-  USART_Config(); // 반드시 먼저 USART 초기화하고
+  USART_Config();
   USART_SendString("\r\n[현재 시각] ");
   USART_SendString(buf);
   USART_SendString("\r\n\r\n");
+
+  char alarm_time_msg[64];
+  snprintf(alarm_time_msg, sizeof(alarm_time_msg), "\r\n%02d:%02d:%02d 에 알람이 울립니다...\r\n", hours, minutes, seconds);
+  USART_SendString(alarm_time_msg);
 
   RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
 
@@ -664,7 +664,7 @@ static void AppTaskStart(void *p_arg)
   Buzzer_Init();
   TouchSensor_Init();
   KnockSensor_Init();
-  //  JoyStick_Init();
+  JoyStick_Init();
   //  Button_Init();
   USART_Config();
 
@@ -1001,13 +1001,6 @@ static void MissionTask(void *p_arg)
                    &err);
       }
     }
-
-    // 이 아래는 “실패” 했을 때만 실행됨
-    // if (mission_fail)
-    // {
-    //   OSTimeDlyHMSM(0, 0, 0, 700, OS_OPT_TIME_HMSM_STRICT, &err); // 재도전 전 잠깐 쉬기
-    //   continue;                                                   // 바깥 while(DEF_TRUE)로 돌아가서 미션 새로 안내
-    // }
   }
 }
 
@@ -1092,34 +1085,30 @@ void JoystickTask(void *p_arg)
 
   strcat(buffer, "조이스틱 모듈을 ");
 
-  int required_joy = Joystick_missions[random_index];
+  int *required_joy = Joystick_missions[random_index];
 
-  int left = 0;
-  int right = 0;
-  int up = 0;
-  int down = 0;
-  int center = 0;
+  int left = 0, right = 0, up = 0, down = 0;
 
   for (int i = 0; i < 3; i++)
   {
-    if (Joystick_missions[required_joy][i] == 1)
+    if (required_joy[i] == 1)
     {
-      left += 1;
+      left++;
       strcat(buffer, "왼쪽 ");
     }
-    else if (Joystick_missions[required_joy][i] == 2)
+    else if (required_joy[i] == 2)
     {
-      right += 1;
+      right++;
       strcat(buffer, "오른쪽 ");
     }
-    else if (Joystick_missions[required_joy][i] == 3)
+    else if (required_joy[i] == 3)
     {
-      up += 1;
+      up++;
       strcat(buffer, "위쪽 ");
     }
-    else
+    else if (required_joy[i] == 4)
     {
-      down += 1;
+      down++;
       strcat(buffer, "아래쪽 ");
     }
   }
