@@ -920,7 +920,7 @@ static void MissionTask(void *p_arg)
 
   while (DEF_TRUE)
   {
-    // 1. 터치 감지될 때까지 대기
+    // 1. 터치 감지될 때까지 대기 (미션 시작 신호)
     flags = OSFlagPend(&AlarmFlagGroup,
                        ALARM_FLAG_MISSION,
                        0,
@@ -928,35 +928,47 @@ static void MissionTask(void *p_arg)
                        0,
                        &err);
 
-    // 2. 미션 랜덤 선택
+    // 2. 랜덤 인덱스 기반 미션 선택
     int required_button = button_missions[random_index];
+    int *required_joy = Joystick_missions[random_index];
 
+    // 조이스틱 방향 카운터 초기화
+    int left = 0, right = 0, up = 0, down = 0;
+    for (int i = 0; i < 3; i++)
+    {
+      if (required_joy[i] == 1)
+        left++;
+      else if (required_joy[i] == 2)
+        right++;
+      else if (required_joy[i] == 3)
+        up++;
+      else if (required_joy[i] == 4)
+        down++;
+    }
+
+    // 미션 안내 출력
     char buf[128];
     snprintf(buf, sizeof(buf),
              "[미션 1]: 버튼 %d회를 누르세요!\r\n", required_button);
     OSQPost(&USARTMsgQ, (void *)buf, strlen(buf) + 1, OS_OPT_POST_FIFO, &err);
 
-    OSFlagPost(&AlarmFlagGroup,
-               ALARM_FLAG_BUTTON,
-               OS_OPT_POST_FLAG_SET,
-               &err);
+    // 버튼 태스크 시작 신호
+    OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_BUTTON, OS_OPT_POST_FLAG_SET, &err);
 
     int button_cnt = 0;
-    int mission_fail = 0;
+    int mission1_done = 0;
 
-    while (1)
+    // 3. 버튼 미션 수행 루프
+    while (!mission1_done)
     {
-      // 알람 해제 신호 오면 즉시 종료(예: 외부에서 강제 종료)
+      // 강제 종료 확인
       if (OSFlagPend(&AlarmFlagGroup,
                      ALARM_FLAG_OFF,
                      0,
                      OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
                      0,
                      &err))
-      {
-        // 강제 종료(성공/실패 상관없이 태스크 종료)
         return;
-      }
 
       msg = OSQPend(&SensorInputQ, 0, OS_OPT_PEND_BLOCKING, &msg_size, 0, &err);
       if (err != OS_ERR_NONE)
@@ -967,18 +979,72 @@ static void MissionTask(void *p_arg)
       if (input.type == SENSOR_BUTTON)
       {
         button_cnt++;
+        if (button_cnt >= required_button)
+        {
+          OSTimeDlyHMSM(0, 0, 0, 300, OS_OPT_TIME_HMSM_STRICT, &err);
+          static const char msg[] = "미션 1 성공!\r\n\r\n[미션 2]: ";
+          OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
+          mission1_done = 1;
+
+          // 버튼 태스크에게 알림
+          OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_BUTTON_SUCCESS, OS_OPT_POST_FLAG_SET, &err);
+
+          // 조이스틱 미션 안내
+          char joy_msg[128] = {0};
+          strcat(joy_msg, "조이스틱을 ");
+          for (int i = 0; i < 3; i++)
+          {
+            if (required_joy[i] == 1)
+              strcat(joy_msg, "← ");
+            else if (required_joy[i] == 2)
+              strcat(joy_msg, "→ ");
+            else if (required_joy[i] == 3)
+              strcat(joy_msg, "↑ ");
+            else if (required_joy[i] == 4)
+              strcat(joy_msg, "↓ ");
+          }
+          strcat(joy_msg, "방향으로 움직여주세요\r\n");
+          OSQPost(&USARTMsgQ, (void *)joy_msg, strlen(joy_msg) + 1, OS_OPT_POST_FIFO, &err);
+        }
       }
+    }
 
-      if (button_cnt >= required_button)
+    // 4. 조이스틱 미션 수행 루프
+    while (1)
+    {
+      // 강제 종료 확인
+      if (OSFlagPend(&AlarmFlagGroup,
+                     ALARM_FLAG_OFF,
+                     0,
+                     OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
+                     0,
+                     &err))
+        return;
+
+      msg = OSQPend(&SensorInputQ, 0, OS_OPT_PEND_BLOCKING, &msg_size, 0, &err);
+      if (err != OS_ERR_NONE)
+        continue;
+
+      input = *(SensorInput *)msg;
+
+      if (input.type == SENSOR_JOYSTICK_LEFT && left > 0)
+        left--;
+      else if (input.type == SENSOR_JOYSTICK_RIGHT && right > 0)
+        right--;
+      else if (input.type == SENSOR_JOYSTICK_UP && up > 0)
+        up--;
+      else if (input.type == SENSOR_JOYSTICK_DOWN && down > 0)
+        down--;
+
+      if (left <= 0 && right <= 0 && up <= 0 && down <= 0)
       {
+        OSTimeDlyHMSM(0, 0, 0, 300, OS_OPT_TIME_HMSM_STRICT, &err);
+        static const char msg[] = "\r\n미션 2 성공! 알람이 해제됩니다.\r\n\r\n";
+        OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
 
-        OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
-        USART_SendString("미션 1 성공!\r\n\r\n[미션 2]: ");
-
-        OSFlagPost(&AlarmFlagGroup,
-                   ALARM_FLAG_BUTTON_SUCCESS,
-                   OS_OPT_POST_FLAG_SET,
-                   &err);
+        // 최종 알람 해제
+        OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_OFF, OS_OPT_POST_FLAG_SET, &err);
+        break;
       }
     }
   }
@@ -1039,148 +1105,86 @@ static void ButtonTask(void *p_arg)
   }
 }
 
-// Joystick Task
-void JoystickTask(void *p_arg)
+// Joystick Task - 센서 방향 감지만 수행 (방향 입력을 SensorInput 구조체로 전송)
+static void JoystickTask(void *p_arg)
 {
   OS_ERR err;
   OS_FLAGS flags;
+  SensorInput input;
 
-  flags = OSFlagPend(&AlarmFlagGroup,
-                     ALARM_FLAG_JOYSTICK_START,
-                     0,
-                     OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_BLOCKING,
-                     0,
-                     &err);
+  (void)p_arg;
 
-  uint16_t joystickX, joystickY;
-  char buffer[200];
-  buffer[0] = '\0'; // 문자열 초기화
-
-  strcat(buffer, "조이스틱 모듈을 ");
-
-  int *required_joy = Joystick_missions[random_index];
-
-  int left = 0, right = 0, up = 0, down = 0;
-
-  for (int i = 0; i < 3; i++)
+  while (DEF_TRUE)
   {
-    if (required_joy[i] == 1)
-    {
-      left++;
-      strcat(buffer, "← ");
-    }
-    else if (required_joy[i] == 2)
-    {
-      right++;
-      strcat(buffer, "→ ");
-    }
-    else if (required_joy[i] == 3)
-    {
-      up++;
-      strcat(buffer, "↑ ");
-    }
-    else if (required_joy[i] == 4)
-    {
-      down++;
-      strcat(buffer, "↓ ");
-    }
-  }
+    // 1. 미션 시작 신호 대기
+    flags = OSFlagPend(&AlarmFlagGroup,
+                       ALARM_FLAG_JOYSTICK_START,
+                       0,
+                       OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_BLOCKING,
+                       0,
+                       &err);
 
-  strcat(buffer, "방향으로 한 번씩 움직여주세요\r\n");
-  OSQPost(&USARTMsgQ, (void *)buffer, sizeof(buffer), OS_OPT_POST_FIFO, &err);
-
-  uint16_t prevX = 0, prevY = 0;
-  while (1)
-  {
-    joystickX = JoyStick_ReadX();
-    joystickY = JoyStick_ReadY();
-
-    if ((joystickX * 7 > 300 && joystickX * 7 < 600) &&
-        (joystickY > 1000 && joystickY < 3000))
+    // 2. 조이스틱이 중앙 위치일 때까지 대기 (초기화 목적)
+    uint16_t joystickX, joystickY;
+    do
     {
-      break; // 중앙 위치에서만 탈출
-    }
+      joystickX = JoyStick_ReadX();
+      joystickY = JoyStick_ReadY();
+      OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
+    } while (!((joystickX * 7 > 300 && joystickX * 7 < 600) && (joystickY > 1000 && joystickY < 3000)));
 
-    OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
-  }
+    // 3. 방향 감지 루프
+    uint16_t prevX = joystickX;
+    uint16_t prevY = joystickY;
 
-  while (1)
-  {
-    joystickX = JoyStick_ReadX();
-    joystickY = JoyStick_ReadY();
-
-    // 중앙 위치일 경우: 상태 초기화 및 남은 방향 안내
-    if ((joystickX * 7 > 300 && joystickX * 7 < 600) &&
-        (joystickY > 1000 && joystickY < 3000))
+    while (DEF_TRUE)
     {
+      joystickX = JoyStick_ReadX();
+      joystickY = JoyStick_ReadY();
+
+      // → 오른쪽
+      if (joystickX * 7 > 1000 && prevX * 7 <= 1000)
+      {
+        input.type = SENSOR_JOYSTICK_RIGHT;
+        OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
+
+        static const char msg[] = "[조이스틱] → 감지\r\n";
+        OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
+      }
+      // ← 왼쪽
+      else if (joystickX * 7 < 100 && prevX * 7 >= 100)
+      {
+        input.type = SENSOR_JOYSTICK_LEFT;
+        OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
+
+        static const char msg[] = "[조이스틱] ← 감지\r\n";
+        OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
+      }
+      // ↑ 위
+      else if (joystickY > 3000 && prevY <= 3000)
+      {
+        input.type = SENSOR_JOYSTICK_UP;
+        OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
+
+        static const char msg[] = "[조이스틱] ↑ 감지\r\n";
+        OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
+      }
+      // ↓ 아래
+      else if (joystickY < 1000 && prevY >= 1000)
+      {
+        input.type = SENSOR_JOYSTICK_DOWN;
+        OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
+
+        static const char msg[] = "[조이스틱] ↓ 감지\r\n";
+        OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
+      }
+
       prevX = joystickX;
       prevY = joystickY;
 
-      OSTimeDlyHMSM(0, 0, 0, 300, OS_OPT_TIME_HMSM_STRICT, &err);
-      continue;
+      // 미션 완료 확인은 MissionTask가 하므로 여기선 무한 반복
+      OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
     }
-
-    // 오른쪽
-    if (joystickX * 7 > 1000 && prevX * 7 <= 1000)
-    {
-      right--;
-      if (right < 0)
-      {
-        right = 0;
-      }
-      static const char msg[] = "→ ";
-      OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
-    }
-
-    // 왼쪽
-    else if (joystickX * 7 < 100 && prevX * 7 >= 100)
-    {
-      left--;
-      if (left < 0)
-      {
-        left = 0;
-      }
-      static const char msg[] = "← ";
-      OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
-    }
-
-    // 위
-    else if (joystickY > 3000 && prevY <= 3000)
-    {
-      up--;
-      if (up < 0)
-      {
-        up = 0;
-      }
-      static const char msg[] = "↑ ";
-      OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
-    }
-
-    // 아래
-    else if (joystickY < 1000 && prevY >= 1000)
-    {
-      down--;
-      if (down < 0)
-      {
-        down = 0;
-      }
-      static const char msg[] = "↓ ";
-      OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
-    }
-
-    prevX = joystickX;
-    prevY = joystickY;
-
-    if (left == 0 && right == 0 && up == 0 && down == 0)
-    {
-      static const char msg[] = "\r\n미션 2 성공!\r\n\r\n";
-      OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
-
-      OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_OFF, OS_OPT_POST_FLAG_SET, &err);
-      break;
-    }
-
-    OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
   }
 }
 
