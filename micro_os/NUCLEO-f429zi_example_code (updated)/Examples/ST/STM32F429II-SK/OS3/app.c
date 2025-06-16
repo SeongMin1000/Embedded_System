@@ -77,10 +77,10 @@
 #define ALARM_FLAG_TOUCH 0x02u   // 0010 (터치 센서 태스크 대기용)
 #define ALARM_FLAG_MISSION 0x04u // 0100 (미션 태스크 시작 신호)
 #define ALARM_FLAG_KNOCK 0x08u
-#define ALARM_FLAG_KNOCK_SUCCESS    0x40u
+#define ALARM_FLAG_KNOCK_SUCCESS 0x40u
 
 #define ALARM_FLAG_OFF 0x10u // 1000
-#define ALARM_FLAG_JOYSTICK_START  0x20u
+#define ALARM_FLAG_JOYSTICK_START 0x20u
 
 /*
 *********************************************************************************************************
@@ -99,8 +99,8 @@ typedef struct
   int knock_count;
   int joystick_dir; // 1 = left, 2 = right, 3 = up, 4 = down
 } Mission;
- int Joystick_missions[5][4] = {
-		 {2, 1, 1}, {1, 2, 4}, {2, 2, 2}, {3, 1, 3}, {1, 1, 4}};
+int Joystick_missions[5][4] = {
+    {2, 1, 1}, {1, 2, 4}, {2, 2, 2}, {3, 1, 3}, {1, 1, 4}};
 
 // 진동 감지 센서만 test
 Mission missions[] = {
@@ -145,9 +145,10 @@ static void Button_Init(void);
 // USART utils
 static void USART_SendChar(uint8_t c);
 static void USART_SendString(const char *s);
-void USART_ReceiveString(char* buffer, uint16_t len);
+void USART_ReceiveString(char *buffer, uint16_t len);
 
 // RTC utils
+int is_valid_time_format(const char *str);
 void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds);
 void RTC_GetTimeStr(char *buf, size_t len);
 void RTC_SetAlarmDaily(void);
@@ -391,29 +392,29 @@ static void USART_SendString(const char *s)
     USART_SendChar((uint8_t)*s++);
 }
 
-void USART_ReceiveString(char* buffer, uint16_t len) {
-    uint16_t i = 0;
-    while (i < len - 1) {
-        // 수신된 데이터가 있을 때까지 대기
-        while (USART_GetFlagStatus(NUCLEO_COM1, USART_FLAG_RXNE) == RESET);
+void USART_ReceiveString(char *buffer, uint16_t len)
+{
+  uint16_t i = 0;
+  while (i < len - 1)
+  {
+    // 수신 대기
+    while (USART_GetFlagStatus(NUCLEO_COM1, USART_FLAG_RXNE) == RESET)
+      ;
 
-        // 수신된 데이터 버퍼에 저장
-        buffer[i] = USART_ReceiveData(NUCLEO_COM1);  // 데이터 읽기
+    char c = USART_ReceiveData(NUCLEO_COM1); // 입력 문자
 
-        // 수신된 문자 실시간으로 터미널에 출력
-        USART_SendChar(buffer[i]);
-
-        // 개행 문자 수신 시 종료
-        if (buffer[i] == '\n') {
-        	USART_SendChar("\n");
-        	buffer[i + 1] = '\0';
-            break;  // 입력 종료
-        }
-
-        i++;
+    // 엔터 입력 시 종료: CR('\r') 또는 LF('\n')
+    if (c == '\r' || c == '\n')
+    {
+      USART_SendString("\r\n"); // 줄바꿈 출력
+      break;
     }
-    buffer[i] = '\0';  // 문자열 끝에 NULL 문자 추가
-    USART_SendString("\r\n");
+
+    buffer[i++] = c;
+    USART_SendChar(c); // 에코 출력
+  }
+
+  buffer[i] = '\0'; // 문자열 끝에 NULL
 }
 
 /*
@@ -421,6 +422,37 @@ void USART_ReceiveString(char* buffer, uint16_t len) {
 *                                       RTC FUNCTIONS
 *********************************************************************************************************
 */
+
+int is_valid_time_format(const char *str)
+{
+  // 1. 길이 확인
+  if (strlen(str) != 8)
+    return 0;
+
+  // 2. ':' 위치 확인
+  if (str[2] != ':' || str[5] != ':')
+    return 0;
+
+  // 3. 숫자 위치 확인
+  for (int i = 0; i < 8; i++)
+  {
+    if (i == 2 || i == 5)
+      continue;
+
+    if (str[i] < '0' || str[i] > '9')
+      return 0;
+  }
+
+  // 4. 숫자로 변환 후 범위 확인
+  int hours = (str[0] - '0') * 10 + (str[1] - '0');
+  int minutes = (str[3] - '0') * 10 + (str[4] - '0');
+  int seconds = (str[6] - '0') * 10 + (str[7] - '0');
+
+  if (hours > 23 || minutes > 59 || seconds > 59)
+    return 0;
+
+  return 1;
+}
 
 void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds)
 {
@@ -454,42 +486,28 @@ void RTC_SetAlarmDaily(void)
   EXTI_Init(&EXTI_InitStruct);
 
   // 3. 알람 시간 설정 ( 사용자 입력으로 변경 )
-    USART_Config();
-    uint8_t hours, minutes, seconds;
-    char time_buffer[9];  // HH:MM:SS
+  USART_Config();
+  uint8_t hours, minutes, seconds;
+  char time_buffer[9]; // HH:MM:SS
 
-    // 시간 입력 받기
+  // 시간 입력 받기 (제대로 된 입력이 아닐 시 다시 입력 받도록 수정)
+  while (1)
+  {
     USART_SendString("시간을 입력하세요 (HH:MM:SS): ");
     USART_ReceiveString(time_buffer, 9);
+    USART_SendString("\r\n");
 
-    // 시간 파싱
-    char* token = strtok(time_buffer, ":");
-	if (token != NULL) {
-		hours = atoi(token);  // 첫 번째 토큰 (시간)
+    // 검증
+    if (is_valid_time_format(time_buffer))
+    {
+      hours = (time_buffer[0] - '0') * 10 + (time_buffer[1] - '0');
+      minutes = (time_buffer[3] - '0') * 10 + (time_buffer[4] - '0');
+      seconds = (time_buffer[6] - '0') * 10 + (time_buffer[7] - '0');
+      break;
+    }
 
-		token = strtok(NULL, ":");  // 두 번째 토큰 (분)
-		if (token != NULL) {
-			minutes = atoi(token);
-		} else {
-			USART_SendString("\r\n잘못된 시간 형식입니다. 다시 입력해주세요.\r\n");
-			return;
-		}
-
-		token = strtok(NULL, ":");  // 세 번째 토큰 (초)
-		if (token != NULL) {
-			seconds = atoi(token);
-		} else {
-			USART_SendString("\r\n잘못된 시간 형식입니다. 다시 입력해주세요.\r\n");
-			return;
-		}
-	} else {
-		USART_SendString("\r\n잘못된 시간 형식입니다. 다시 입력해주세요.\r\n");
-		return;
-	}
-	if (hours > 23 || minutes > 59 || seconds > 59) {
-		USART_SendString("\r\n시간, 분, 초는 올바른 범위 내에 있어야 합니다.\r\n");
-		return;
-	}
+    USART_SendString("\r\n잘못된 시간 형식 또는 범위입니다. 다시 입력해주세요.\r\n");
+  }
 
   RTC_AlarmTypeDef alarm;
   alarm.RTC_AlarmTime.RTC_Hours = hours;
@@ -499,13 +517,18 @@ void RTC_SetAlarmDaily(void)
   alarm.RTC_AlarmDateWeekDay = 1;                  // 무시됨
   alarm.RTC_AlarmDateWeekDaySel = RTC_AlarmDateWeekDaySel_Date;
 
+  RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
+
+  char alarm_time_msg[64];
+  snprintf(alarm_time_msg, sizeof(alarm_time_msg), "\r\n%02d:%02d:%02d 에 알람이 울립니다...\r\n", hours, minutes, seconds);
+  USART_SendString(alarm_time_msg);
+
   char buf[32];
   RTC_GetTimeStr(buf, sizeof(buf));
   USART_Config(); // 반드시 먼저 USART 초기화하고
   USART_SendString("\r\n[현재 시각] ");
   USART_SendString(buf);
   USART_SendString("\r\n");
-
 
   RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
 
@@ -603,23 +626,12 @@ int main(void)
   Mem_Init();
   Math_Init();
 
-  // set current & alram time
+  // 현재 시간 설정
   RTC_CustomInit();
-  RTC_CustomSetTime(8, 59, 58);
+  RTC_CustomSetTime(8, 59, 55);
 
-
-  char buf[32];
-  RTC_GetTimeStr(buf, sizeof(buf));
-  USART_Config(); // 반드시 먼저 USART 초기화하고
-  USART_SendString("\r\n[현재 시각] ");
-  USART_SendString(buf);
-  USART_SendString("\r\n");
-
-
+  // 사용자 알람 설정
   RTC_SetAlarmDaily();
-
-  // 현재 시각 UART로 출력 (디버깅용)
-
 
   /* OS Init */
   OSInit(&err);
@@ -752,20 +764,19 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
-
-   OSTaskCreate(&TCB_Joystick,
-                "Joystick Task",
+  OSTaskCreate(&TCB_Joystick,
+               "Joystick Task",
                JoystickTask,
-                0,
-                JOYSTICK_PRIO,
-                &STK_Joystick[0],
-                JOYSTICK_STK_SIZE / 10,
-                JOYSTICK_STK_SIZE,
-                0,
-                0,
-                0,
-                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
-                &err);
+               0,
+               JOYSTICK_PRIO,
+               &STK_Joystick[0],
+               JOYSTICK_STK_SIZE / 10,
+               JOYSTICK_STK_SIZE,
+               0,
+               0,
+               0,
+               OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
+               &err);
 
   // button task create (PRIO 6)
   // OSTaskCreate(&TCB_Button,
@@ -872,7 +883,6 @@ static void TouchSensorTask(void *p_arg)
                        0,
                        &err);
 
-
     // 2. 터치센서 OFF될 때까지 대기
     while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3) == Bit_SET)
     {
@@ -938,7 +948,6 @@ static void MissionTask(void *p_arg)
     srand(time(NULL));
     int idx = rand() % (sizeof(knock_missions) / sizeof(int));
     int required_knock = knock_missions[idx];
-    USART_SendString("미션태스크 진입 확인\r\n");
     static const char start_msg[] = "\r\n[미션] 테스트 모드: 노크 센서만 사용 중!\r\n";
     OSQPost(&USARTMsgQ, (void *)start_msg, sizeof(start_msg), OS_OPT_POST_FIFO, &err);
 
@@ -994,9 +1003,9 @@ static void MissionTask(void *p_arg)
         USART_SendString("[미션] 테스트 모드: 조이스틱 모듈 사용 중\r\n");
 
         OSFlagPost(&AlarmFlagGroup,
-            			  ALARM_FLAG_KNOCK_SUCCESS,
-            	  					 OS_OPT_POST_FLAG_SET,
-            	  					 &err);
+                   ALARM_FLAG_KNOCK_SUCCESS,
+                   OS_OPT_POST_FLAG_SET,
+                   &err);
 
         /*
         // 재시작 테스트
@@ -1050,17 +1059,17 @@ static void KnockSensorTask(void *p_arg)
     {
       // 미션 종료 플래그 오면 바로 대기 상태로 돌아감
       if (OSFlagPend(&AlarmFlagGroup,
-    		  	  	  ALARM_FLAG_KNOCK_SUCCESS,
+                     ALARM_FLAG_KNOCK_SUCCESS,
                      0,
                      OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
                      0,
                      &err))
       {
-    	  OSFlagPost(&AlarmFlagGroup,
-    	  					 ALARM_FLAG_JOYSTICK_START,
-    	  					 OS_OPT_POST_FLAG_SET,
-    	  					 &err);
-    	  break;
+        OSFlagPost(&AlarmFlagGroup,
+                   ALARM_FLAG_JOYSTICK_START,
+                   OS_OPT_POST_FLAG_SET,
+                   &err);
+        break;
       }
 
       curr = KnockSensor_Read();
@@ -1113,129 +1122,149 @@ static void USARTTask(void *p_arg)
   }
 }
 
+void JoystickTask(void *p_arg)
+{
+  OS_ERR err;
+  OS_FLAGS flags;
 
-void JoystickTask(void *p_arg) {
-	OS_ERR err;
-	OS_FLAGS flags;
+  flags = OSFlagPend(&AlarmFlagGroup,
+                     ALARM_FLAG_JOYSTICK_START,
+                     0,
+                     OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_BLOCKING,
+                     0,
+                     &err);
 
-	flags = OSFlagPend(&AlarmFlagGroup,
-		                       ALARM_FLAG_JOYSTICK_START,
-		                       0,
-		                       OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_FLAG_CONSUME | OS_OPT_PEND_BLOCKING,
-		                       0,
-		                       &err);
+  BSP_Init();
+  BSP_Tick_Init();
+  USART_Config();
+  JoyStick_Init();
 
-	BSP_Init();
-	BSP_Tick_Init();
-	USART_Config();
-	JoyStick_Init();
+  uint16_t joystickX, joystickY;
+  char buffer[200];
+  buffer[0] = '\0'; // 문자열 초기화
 
+  strcat(buffer, "[테스트 미션] 조이스틱 모듈을 ");
 
-    uint16_t joystickX, joystickY;
-    char buffer[200];
-    buffer[0] = '\0';  // 문자열 초기화
+  srand(time(NULL));
+  int rand_number = rand() % 5 + 1;
 
-    strcat(buffer, "[테스트 미션] 조이스틱 모듈을 ");
+  int left = 0;
+  int right = 0;
+  int up = 0;
+  int down = 0;
+  int center = 0;
 
-    srand(time(NULL));
-    int rand_number =  rand() % 5 + 1;
+  for (int i = 0; i < 3; i++)
+  {
+    if (Joystick_missions[rand_number][i] == 1)
+    {
+      left += 1;
+      strcat(buffer, "왼쪽 ");
+    }
+    else if (Joystick_missions[rand_number][i] == 2)
+    {
+      right += 1;
+      strcat(buffer, "오른쪽 ");
+    }
+    else if (Joystick_missions[rand_number][i] == 3)
+    {
+      up += 1;
+      strcat(buffer, "위쪽 ");
+    }
+    else
+    {
+      down += 1;
+      strcat(buffer, "아래쪽 ");
+    }
+  }
 
-    int left=0;
-    int right = 0;
-    int up= 0 ;
-    int down=0;
-    int center =0;
+  strcat(buffer, "방향으로 움직여주세요\r\n");
+  USART_SendString(buffer);
+  uint16_t prevX = 0, prevY = 0;
 
-    for (int i =0 ; i<3 ; i++){
-    	if(Joystick_missions[rand_number][i]==1){
-    		left+=1;
-    		strcat(buffer, "왼쪽 ");
-    	}else if(Joystick_missions[rand_number][i]==2){
-    		right+=1;
-    		strcat(buffer, "오른쪽 ");
-    	}else if(Joystick_missions[rand_number][i]==3){
-    		up+=1;
-    		strcat(buffer, "위쪽 ");
-    	}else{
-    		down+=1;
-    		strcat(buffer, "아래쪽 ");
-    	}
+  while (1)
+  {
+    joystickX = JoyStick_ReadX();
+    joystickY = JoyStick_ReadY();
+
+    if ((joystickX * 7 > 300 && joystickX * 7 < 600) &&
+        (joystickY > 1000 && joystickY < 3000))
+    {
+      break; // 중앙 위치에서만 탈출
     }
 
-    strcat(buffer, "방향으로 움직여주세요\r\n");
-    USART_SendString(buffer);
-    uint16_t prevX = 0, prevY = 0;
+    OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
+  }
 
-    while (1) {
-        joystickX = JoyStick_ReadX();
-        joystickY = JoyStick_ReadY();
+  while (1)
+  {
+    joystickX = JoyStick_ReadX();
+    joystickY = JoyStick_ReadY();
 
-        if ((joystickX * 7 > 300 && joystickX * 7 < 600) &&
-            (joystickY > 1000 && joystickY < 3000)) {
-            break;  // 중앙 위치에서만 탈출
-        }
+    // 중앙 위치일 경우: 상태 초기화 및 남은 방향 안내
+    if ((joystickX * 7 > 300 && joystickX * 7 < 600) &&
+        (joystickY > 1000 && joystickY < 3000))
+    {
+      prevX = joystickX;
+      prevY = joystickY;
 
-        OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
+      OSTimeDlyHMSM(0, 0, 0, 300, OS_OPT_TIME_HMSM_STRICT, &err);
+      continue;
     }
 
-    while (1) {
-           joystickX = JoyStick_ReadX();
-           joystickY = JoyStick_ReadY();
+    // 오른쪽
+    if (joystickX * 7 > 1000 && prevX * 7 <= 1000)
+    {
+      right--;
+      if (right < 0)
+      {
+        right = 0;
+      }
+      USART_SendString("오른쪽 입력\r\n");
+    }
 
-           // 중앙 위치일 경우: 상태 초기화 및 남은 방향 안내
-           if ((joystickX * 7 > 300 && joystickX * 7 < 600) &&
-               (joystickY > 1000 && joystickY < 3000)) {
-               prevX = joystickX;
-               prevY = joystickY;
+    // 왼쪽
+    else if (joystickX * 7 < 100 && prevX * 7 >= 100)
+    {
+      left--;
+      if (left < 0)
+      {
+        left = 0;
+      }
+      USART_SendString("왼쪽 입력\r\n");
+    }
 
-               OSTimeDlyHMSM(0, 0, 0, 300, OS_OPT_TIME_HMSM_STRICT, &err);
-               continue;
-           }
+    // 위
+    else if (joystickY > 3000 && prevY <= 3000)
+    {
+      up--;
+      if (up < 0)
+      {
+        up = 0;
+      }
+      USART_SendString("위쪽 입력\r\n");
+    }
 
-           // 오른쪽
-           if (joystickX * 7 > 1000 && prevX * 7 <= 1000) {
-               right--;
-               if(right <0){
-            	   right = 0;
-               }
-               USART_SendString("오른쪽 입력\r\n");
-           }
+    // 아래
+    else if (joystickY < 1000 && prevY >= 1000)
+    {
+      down--;
+      if (down < 0)
+      {
+        down = 0;
+      }
+      USART_SendString("아래쪽 입력\r\n");
+    }
 
-           // 왼쪽
-           else if (joystickX * 7 < 100 && prevX * 7 >= 100) {
-               left--;
-               if(left <0){
-            	   left = 0;
-               }
-               USART_SendString("왼쪽 입력\r\n");
-           }
+    prevX = joystickX;
+    prevY = joystickY;
 
-           // 위
-           else if (joystickY > 3000 && prevY <= 3000) {
-               up--;
-               if(up <0){
-            	   up = 0;
-               }
-               USART_SendString("위쪽 입력\r\n");
-           }
+    if (left == 0 && right == 0 && up == 0 && down == 0)
+    {
+      OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_OFF, OS_OPT_POST_FLAG_SET, &err);
+      break;
+    }
 
-           // 아래
-           else if (joystickY < 1000 && prevY >= 1000 ) {
-               down--;
-               if(down <0){
-            	   down = 0;
-               }
-               USART_SendString("아래쪽 입력\r\n");
-           }
-
-           prevX = joystickX;
-           prevY = joystickY;
-
-           if (left == 0 && right == 0 && up == 0 && down == 0) {
-               OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_OFF, OS_OPT_POST_FLAG_SET, &err);
-               break;
-           }
-
-           OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
-       }
-   }
+    OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
+  }
+}
