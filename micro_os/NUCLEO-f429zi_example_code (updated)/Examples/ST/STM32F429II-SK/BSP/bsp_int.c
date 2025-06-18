@@ -483,29 +483,31 @@ static void BSP_IntHandlerDummy(void) {}
 *********************************************************************************************************
 */
 
-// rtc alarm handler 재정의
-extern OS_FLAG_GRP AlarmFlagGroup; // app.c에 선언
-#define ALARM_FLAG_BUZZER 0x01u
-#define ALARM_FLAG_TOUCH 0x02u
+// RTC Alarm 인터럽트 핸들러 재정의
+// → 알람 시각이 도달하면 부저와 터치 태스크에 알림
+extern OS_FLAG_GRP AlarmFlagGroup; // app.c에 선언된 전역 플래그 그룹
+#define ALARM_FLAG_BUZZER 0x01u    // 부저 태스크용 플래그
+#define ALARM_FLAG_TOUCH 0x02u     // 터치 태스크용 플래그
 
-// RTC 인터럽트 핸들러
+// RTC 인터럽트 발생 시 호출됨
 void BSP_IntHandlerRTCAlarm(void)
 {
   OS_ERR err;
 
-  if (RTC_GetITStatus(RTC_IT_ALRA) != RESET)
+  if (RTC_GetITStatus(RTC_IT_ALRA) != RESET) // 알람 인터럽트 발생 확인
   {
-    RTC_ClearITPendingBit(RTC_IT_ALRA);
-    EXTI_ClearITPendingBit(EXTI_Line17);
+    RTC_ClearITPendingBit(RTC_IT_ALRA);  // RTC 인터럽트 플래그 클리어
+    EXTI_ClearITPendingBit(EXTI_Line17); // EXTI 라인 플래그도 클리어
 
-    // RTC 인터럽트 핸들러
+    // 1. 부저 태스크에 알람 시작 신호
     OSFlagPost(&AlarmFlagGroup,
-               ALARM_FLAG_BUZZER, // 부저에게만 신호
+               ALARM_FLAG_BUZZER,
                OS_OPT_POST_FLAG_SET,
                &err);
 
+    // 2. 터치 태스크에 미션 준비 신호
     OSFlagPost(&AlarmFlagGroup,
-               ALARM_FLAG_TOUCH, // 터치 태스크에도 신호
+               ALARM_FLAG_TOUCH,
                OS_OPT_POST_FLAG_SET,
                &err);
   }

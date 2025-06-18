@@ -71,16 +71,15 @@
 
 #define JOYSTICK_X_PIN GPIO_Pin_0   // PA0
 #define JOYSTICK_Y_PIN GPIO_Pin_7   // PA7
-#define JOYSTICK_SW_PIN GPIO_Pin_12 // PC13 (SW 버튼)
+#define JOYSTICK_SW_PIN GPIO_Pin_12 // PC13
 
-#define ALARM_FLAG_BUZZER 0x01u  // 0001
-#define ALARM_FLAG_TOUCH 0x02u   // 0010 (터치 센서 태스크 대기용)
-#define ALARM_FLAG_MISSION 0x04u // 0100 (미션 태스크 시작 신호)
+#define ALARM_FLAG_BUZZER 0x01u
+#define ALARM_FLAG_TOUCH 0x02u
+#define ALARM_FLAG_MISSION 0x04u
 #define ALARM_FLAG_BUTTON 0x08u
-#define ALARM_FLAG_BUTTON_SUCCESS 0x40u
-
 #define ALARM_FLAG_OFF 0x10u
 #define ALARM_FLAG_JOYSTICK_START 0x20u
+#define ALARM_FLAG_BUTTON_SUCCESS 0x40u
 
 /*
 *********************************************************************************************************
@@ -94,15 +93,16 @@ typedef enum
   COMn
 } COM_TypeDef;
 
+// 센서 종류를 정의
+// 각 항목은 미션 수행을 위한 센서 입력 종류를 나타냄
 typedef enum
 {
-  SENSOR_BUTTON,
-  SENSOR_JOYSTICK_LEFT,
-  SENSOR_JOYSTICK_RIGHT,
-  SENSOR_JOYSTICK_UP,
-  SENSOR_JOYSTICK_DOWN
+  SENSOR_BUTTON,         // 버튼 입력 감지
+  SENSOR_JOYSTICK_LEFT,  // 조이스틱 왼쪽 방향 입력
+  SENSOR_JOYSTICK_RIGHT, // 조이스틱 오른쪽 방향 입력
+  SENSOR_JOYSTICK_UP,    // 조이스틱 위 방향 입력
+  SENSOR_JOYSTICK_DOWN   // 조이스틱 아래 방향 입력
 } SensorType;
-
 typedef struct
 {
   SensorType type;
@@ -170,9 +170,6 @@ static void ApptaskCreate(void *p_arg);
 *********************************************************************************************************
 */
 
-static OS_TCB AppTaskStartTCB;
-static CPU_STK AppTaskStartStk[APP_CFG_ApptaskCreate_STK_SIZE];
-
 char target_time[16] = {0};
 char current_time[16] = {0};
 char input_buffer[32];
@@ -180,16 +177,25 @@ char input_buffer[32];
 // 알람 시각
 RTC_TimeTypeDef g_alarmTime;
 
-uint8_t input_index = 0;
-uint8_t is_target_set = 0;
-
-// 버튼, 조이스틱 미션
+// 무작위 미션 선택용 인덱스 (0~2)
 volatile uint8_t random_index;
+
+// 버튼미션 (눌러야 하는 횟수 1~3회)
 int button_missions[3] = {1, 2, 3};
+
+// 조이스틱 미션 (방향 코드 3개로 구성된 미션 3종)
+// 방향: 1=LEFT, 2=UP, 3=RIGHT, 4=DOWN
 int Joystick_missions[3][3] = {
-    {2, 1, 1}, {1, 2, 4}, {3, 1, 2}};
+    {2, 1, 1}, // 미션 1: UP → LEFT → LEFT
+    {1, 2, 4}, // 미션 2: LEFT → UP → DOWN
+    {3, 1, 2}  // 미션 3: RIGHT → LEFT → UP
+};
 
 //-----------------------------TCB & STACK ---------------------------------
+// AppTaskStart
+static OS_TCB AppTaskStartTCB;
+static CPU_STK AppTaskStartStk[APP_CFG_ApptaskCreate_STK_SIZE];
+
 // buzzer
 static OS_TCB TCB_Buzzer;
 static CPU_STK STK_Buzzer[BUZZER_TASK_STK_SIZE];
@@ -230,122 +236,162 @@ OS_Q USARTMsgQ;             // usart 출력 메시지 큐로 처리
 *********************************************************************************************************
 */
 
-// USART
+// USART 초기화 함수
 static void USART_InitCOM(COM_TypeDef com, const USART_InitTypeDef *cfg)
 {
   if (com != COM1)
-    return;
+    return; // COM1 외에는 무시
 
+  // GPIO 및 USART 클럭 활성화
   RCC_AHB1PeriphClockCmd(NUCLEO_COM1_TX_PORT_CLK | NUCLEO_COM1_RX_PORT_CLK, ENABLE);
   RCC_APB1PeriphClockCmd(NUCLEO_COM1_CLK, ENABLE);
 
+  // TX/RX 핀을 USART 기능으로 설정
   GPIO_PinAFConfig(NUCLEO_COM1_TX_PORT, NUCLEO_COM1_TX_SRC, NUCLEO_COM1_TX_AF);
   GPIO_PinAFConfig(NUCLEO_COM1_RX_PORT, NUCLEO_COM1_RX_SRC, NUCLEO_COM1_RX_AF);
 
+  // GPIO 설정: Push-Pull, Pull-up, 50MHz
   GPIO_InitTypeDef GPIO_InitStruct;
   GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF;
   GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
   GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;
   GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
 
+  // TX 핀 초기화
   GPIO_InitStruct.GPIO_Pin = NUCLEO_COM1_TX_PIN;
   GPIO_Init(NUCLEO_COM1_TX_PORT, &GPIO_InitStruct);
+
+  // RX 핀 초기화
   GPIO_InitStruct.GPIO_Pin = NUCLEO_COM1_RX_PIN;
   GPIO_Init(NUCLEO_COM1_RX_PORT, &GPIO_InitStruct);
 
+  // USART 설정 적용 및 활성화
   USART_Init(NUCLEO_COM1, (USART_InitTypeDef *)cfg);
   USART_Cmd(NUCLEO_COM1, ENABLE);
 }
 
+// USART 설정 함수
 static void USART_Config(void)
 {
   USART_InitTypeDef cfg;
+
+  // 통신 속도 설정 (115200bps)
   cfg.USART_BaudRate = 115200;
+
+  // 데이터 비트 길이: 8비트
   cfg.USART_WordLength = USART_WordLength_8b;
+
+  // 정지 비트: 1비트
   cfg.USART_StopBits = USART_StopBits_1;
+
+  // 패리티 비트 없음
   cfg.USART_Parity = USART_Parity_No;
+
+  // 하드웨어 흐름 제어 사용 안 함
   cfg.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+
+  // 송신 + 수신 모드 활성화
   cfg.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
+
+  // 설정값으로 COM1 초기화
   USART_InitCOM(COM1, &cfg);
 }
 
-// RTC
+// RTC 초기화 함수 (LSI 사용)
 static void RTC_CustomInit(void)
 {
+  // 전원 인터페이스 클럭 활성화
   RCC_APB1PeriphClockCmd(RCC_APB1Periph_PWR, ENABLE);
+
+  // 백업 레지스터 접근 허용
   PWR_BackupAccessCmd(ENABLE);
+
+  // LSI(내부 저속 클럭) 활성화
   RCC_LSICmd(ENABLE);
   while (RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET)
-    ;
+    ; // LSI 안정화 대기
+
+  // RTC 클럭 소스로 LSI 설정 후 활성화
   RCC_RTCCLKConfig(RCC_RTCCLKSource_LSI);
   RCC_RTCCLKCmd(ENABLE);
+
+  // RTC 레지스터 동기화 대기
   RTC_WaitForSynchro();
 
+  // RTC 기본 설정 (24시간제, 프리스케일러 설정)
   RTC_InitTypeDef RTC_InitStruct;
   RTC_StructInit(&RTC_InitStruct);
   RTC_InitStruct.RTC_HourFormat = RTC_HourFormat_24;
-  RTC_InitStruct.RTC_AsynchPrediv = 0x7F;
-  RTC_InitStruct.RTC_SynchPrediv = 0x0130;
+  RTC_InitStruct.RTC_AsynchPrediv = 0x7F;  // 비동기 프리스케일러
+  RTC_InitStruct.RTC_SynchPrediv = 0x0130; // 동기 프리스케일러
   RTC_Init(&RTC_InitStruct);
 }
 
-// touch sensor
+// 터치 센서 초기화 함수
 static void TouchSensor_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct;
 
+  // GPIOA 클럭 활성화
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
 
-  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_3; // (PA3 / A0)
-  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;
-  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_DOWN;
-
+  // PA3 (A0 핀)을 입력 모드 + Pull-down으로 설정
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_3;      // A0 핀 (터치 센서 연결)
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;   // 입력 모드
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_DOWN; // 기본값 LOW 유지 (풀다운)
   GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
-// buzzer
+// 부저 센서 초기화 함수
 static void Buzzer_Init(void)
 {
+  // GPIOA 클럭 활성화
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
 
   GPIO_InitTypeDef GPIO_InitStruct;
-  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_5; // (PA5 / D13)
-  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OUT;
-  GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
-  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
-  GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_5;         // D13 핀 (PA5, 부저 연결)
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OUT;     // 출력 모드
+  GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;    // Push-Pull 출력
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;  // 풀업/풀다운 없음
+  GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz; // 속도 설정
   GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
-// joystick
+// 조이스틱 초기화 함수
 static void JoyStick_Init(void)
 {
+  // GPIOA, ADC1 클럭 활성화
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
   RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
 
+  // 조이스틱 X, Y 핀을 아날로그 입력 모드로 설정 (PA3, PA7)
   GPIO_InitTypeDef GPIO_InitStruct;
-  GPIO_InitStruct.GPIO_Pin = JOYSTICK_X_PIN | JOYSTICK_Y_PIN; // PA3, PA7
-  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AN;                   // analog mode
-  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
+  GPIO_InitStruct.GPIO_Pin = JOYSTICK_X_PIN | JOYSTICK_Y_PIN; // X=PA3, Y=PA7
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AN;                   // 아날로그 입력
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;               // 풀업/풀다운 없음
   GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  // ADC 설정 (12비트 해상도)
   ADC_InitTypeDef ADC_InitStruct;
-  ADC_StructInit(&ADC_InitStruct);
+  ADC_StructInit(&ADC_InitStruct); // 기본 설정 초기화
   ADC_InitStruct.ADC_Resolution = ADC_Resolution_12b;
   ADC_Init(ADC1, &ADC_InitStruct);
 
-  ADC_Cmd(ADC1, ENABLE);       // ADC1 activate
-  ADC_SoftwareStartConv(ADC1); // ADC convert
+  // ADC1 활성화 및 변환 시작
+  ADC_Cmd(ADC1, ENABLE);
+  ADC_SoftwareStartConv(ADC1);
 }
 
-// button init
-static Button_Init(void)
+// 버튼 초기화 함수
+static void Button_Init(void)
 {
+  // GPIOC 클럭 활성화
   RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+
   GPIO_InitTypeDef GPIO_InitStruct;
-  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_6; // PA6
-  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;
-  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;
+  GPIO_InitStruct.GPIO_Pin = GPIO_Pin_6;    // PC6 (버튼 연결)
+  GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN; // 입력 모드
+  GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP; // 풀업 설정 (기본 HIGH)
   GPIO_Init(GPIOC, &GPIO_InitStruct);
 }
 
@@ -355,54 +401,61 @@ static Button_Init(void)
 *********************************************************************************************************
 */
 
+// USART로 문자 1개 전송
 static void USART_SendChar(uint8_t c)
 {
+  // 송신 버퍼가 빌 때까지 대기
   while (USART_GetFlagStatus(NUCLEO_COM1, USART_FLAG_TXE) == RESET)
     ;
+  // 문자 전송
   USART_SendData(NUCLEO_COM1, c);
 }
 
+// USART로 문자열 전송
 static void USART_SendString(const char *s)
 {
+  // 문자열 끝(null 문자)까지 반복 전송
   while (*s)
     USART_SendChar((uint8_t)*s++);
 }
 
+// USART로 문자열 수신
 void USART_ReceiveString(char *buffer, uint16_t len)
 {
   uint16_t i = 0;
 
-  while (i < len - 1)
+  while (i < len - 1) // 마지막은 널 문자('\0')용
   {
+    // 수신 데이터가 올 때까지 대기
     while (USART_GetFlagStatus(NUCLEO_COM1, USART_FLAG_RXNE) == RESET)
       ;
 
     char c = USART_ReceiveData(NUCLEO_COM1);
 
-    // 엔터 입력 시 종료
+    // 엔터 입력 시 수신 종료
     if (c == '\r' || c == '\n')
     {
-      USART_SendString("\r\n");
+      USART_SendString("\r\n"); // 줄바꿈 출력
       break;
     }
 
-    // 백스페이스 처리
-    if (c == '\b' || c == 127) // '\b' or DEL
+    // 백스페이스 또는 Delete 처리
+    if (c == '\b' || c == 127)
     {
       if (i > 0)
       {
-        i--;                       // 커서 뒤로
-        buffer[i] = '\0';          // 마지막 문자 제거
-        USART_SendString("\b \b"); // 화면에서도 지우기
+        i--;                       // 인덱스 감소
+        buffer[i] = '\0';          // 문자 제거
+        USART_SendString("\b \b"); // 화면에서도 지움
       }
       continue;
     }
 
-    buffer[i++] = c;
-    USART_SendChar(c);
+    buffer[i++] = c;   // 문자 저장
+    USART_SendChar(c); // 에코 출력
   }
 
-  buffer[i] = '\0'; // 널 종료
+  buffer[i] = '\0'; // 문자열 종료 (null 문자)
 }
 
 /*
@@ -411,27 +464,27 @@ void USART_ReceiveString(char *buffer, uint16_t len)
 *********************************************************************************************************
 */
 
+// "hh:mm:ss" 형식의 문자열이 올바른 시간인지 확인하는 함수
 int is_valid_time_format(const char *str)
 {
-  // 1. 길이 확인
+  // 1. 문자열 길이가 8이어야 함 ("hh:mm:ss")
   if (strlen(str) != 8)
     return 0;
 
-  // 2. ':' 위치 확인
+  // 2. 구분자 ':'가 올바른 위치에 있어야 함 (index 2, 5)
   if (str[2] != ':' || str[5] != ':')
     return 0;
 
-  // 3. 숫자 위치 확인
+  // 3. 나머지 문자들이 숫자인지 확인
   for (int i = 0; i < 8; i++)
   {
     if (i == 2 || i == 5)
       continue;
-
     if (str[i] < '0' || str[i] > '9')
       return 0;
   }
 
-  // 4. 숫자로 변환 후 범위 확인
+  // 4. 숫자로 변환 후 시간 범위 검사
   int hours = (str[0] - '0') * 10 + (str[1] - '0');
   int minutes = (str[3] - '0') * 10 + (str[4] - '0');
   int seconds = (str[6] - '0') * 10 + (str[7] - '0');
@@ -442,30 +495,34 @@ int is_valid_time_format(const char *str)
   return 1;
 }
 
+// RTC 시간 설정 함수
 void RTC_CustomSetTime(uint8_t hours, uint8_t minutes, uint8_t seconds)
 {
   RTC_TimeTypeDef RTC_Time;
   RTC_Time.RTC_Hours = hours;
   RTC_Time.RTC_Minutes = minutes;
   RTC_Time.RTC_Seconds = seconds;
-  RTC_SetTime(RTC_Format_BIN, &RTC_Time);
+  RTC_SetTime(RTC_Format_BIN, &RTC_Time); // 바이너리 형식으로 설정
 }
 
+// RTC 시간 문자열로 가져오기 (형식: "hh:mm:ss")
 void RTC_GetTimeStr(char *buf, size_t len)
 {
   RTC_TimeTypeDef RTC_Time;
   RTC_GetTime(RTC_Format_BIN, &RTC_Time);
-  snprintf(buf, len, "%02d:%02d:%02d", RTC_Time.RTC_Hours, RTC_Time.RTC_Minutes, RTC_Time.RTC_Seconds);
+  snprintf(buf, len, "%02d:%02d:%02d",
+           RTC_Time.RTC_Hours, RTC_Time.RTC_Minutes, RTC_Time.RTC_Seconds);
 }
 
+// 매일 특정 시간에 울리는 RTC 알람 설정 함수
 void RTC_SetAlarmDaily(void)
 {
-  // 1. 알람 인터럽트 비활성화 & 플래그 클리어
+  // 1. 기존 알람 및 인터럽트 비활성화, 플래그 초기화
   RTC_AlarmCmd(RTC_Alarm_A, DISABLE);
   RTC_ClearITPendingBit(RTC_IT_ALRA);
   EXTI_ClearITPendingBit(EXTI_Line17);
 
-  // 2. 외부 인터럽트 설정 (RTC 알람용 EXTI17)
+  // 2. EXTI17(RTC 알람용) 인터럽트 라인 설정
   EXTI_InitTypeDef EXTI_InitStruct;
   EXTI_InitStruct.EXTI_Line = EXTI_Line17;
   EXTI_InitStruct.EXTI_Mode = EXTI_Mode_Interrupt;
@@ -473,20 +530,17 @@ void RTC_SetAlarmDaily(void)
   EXTI_InitStruct.EXTI_LineCmd = ENABLE;
   EXTI_Init(&EXTI_InitStruct);
 
-  // 3. 알람 시간 설정 ( 사용자 입력으로 변경 )
-  USART_Config();
+  // 3. 사용자로부터 알람 시간 입력 받기 (HH:MM:SS 형식)
+  USART_Config(); // 시리얼 통신 설정
   uint8_t hours, minutes, seconds;
-  char time_buffer[9]; // HH:MM:SS
+  char time_buffer[9]; // 입력받을 문자열 버퍼
 
-  // 시간 입력 받기 (제대로 된 입력이 아닐 시 다시 입력 받도록 수정)
   while (1)
   {
     USART_SendString("알람 시각을 설정하세요 (HH:MM:SS)\r\n");
     USART_ReceiveString(time_buffer, 9);
-    USART_SendString("\r\n");
 
-    // 검증
-    if (is_valid_time_format(time_buffer))
+    if (is_valid_time_format(time_buffer)) // 입력 유효성 확인
     {
       hours = (time_buffer[0] - '0') * 10 + (time_buffer[1] - '0');
       minutes = (time_buffer[3] - '0') * 10 + (time_buffer[4] - '0');
@@ -497,37 +551,35 @@ void RTC_SetAlarmDaily(void)
     USART_SendString("\r\n잘못된 시간 형식 또는 범위입니다. 다시 입력해주세요.\r\n");
   }
 
+  // 4. 알람 시간 설정 (요일/날짜는 무시)
   RTC_AlarmTypeDef alarm;
   alarm.RTC_AlarmTime.RTC_Hours = hours;
   alarm.RTC_AlarmTime.RTC_Minutes = minutes;
   alarm.RTC_AlarmTime.RTC_Seconds = seconds;
-  alarm.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay; // 날짜 무시
-  alarm.RTC_AlarmDateWeekDay = 1;                  // 무시됨
+  alarm.RTC_AlarmMask = RTC_AlarmMask_DateWeekDay;
+  alarm.RTC_AlarmDateWeekDay = 1;
   alarm.RTC_AlarmDateWeekDaySel = RTC_AlarmDateWeekDaySel_Date;
 
   RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
 
+  // 5. 현재 시간 및 알람 설정 안내 출력
   char buf[32];
   RTC_GetTimeStr(buf, sizeof(buf));
-  USART_Config();
   USART_SendString("\r\n[현재 시각] ");
   USART_SendString(buf);
   USART_SendString("\r\n");
 
   char alarm_time_msg[64];
-  snprintf(alarm_time_msg, sizeof(alarm_time_msg), "%02d:%02d:%02d 에 알람이 울립니다...\r\n\r\n", hours, minutes, seconds);
+  snprintf(alarm_time_msg, sizeof(alarm_time_msg), "%02d:%02d:%02d 에 알람이 울립니다...\r\n\r\n",
+           hours, minutes, seconds);
   USART_SendString(alarm_time_msg);
 
-  RTC_SetAlarm(RTC_Format_BIN, RTC_Alarm_A, &alarm);
-
-  // 4. 인터럽트 설정 및 알람 켜기
+  // 6. 알람 인터럽트 활성화 및 알람 시작
   RTC_ITConfig(RTC_IT_ALRA, ENABLE);
   RTC_AlarmCmd(RTC_Alarm_A, ENABLE);
-
-  // 5. NVIC 등록
   NVIC_EnableIRQ(RTC_Alarm_IRQn);
 
-  // 6. 알람 울리기 전 카운트 다운을 위한 변수 설정
+  // 7. 이후 사용을 위한 전역 알람 시간 저장
   g_alarmTime.RTC_Hours = hours;
   g_alarmTime.RTC_Minutes = minutes;
   g_alarmTime.RTC_Seconds = seconds;
@@ -539,14 +591,16 @@ void RTC_SetAlarmDaily(void)
 *********************************************************************************************************
 */
 
-void Buzzer_On(void) // LOW에서 ON
+// 부저 ON (GPIO LOW일 때 작동하는 능동 부저)
+void Buzzer_On(void)
 {
-  GPIO_ResetBits(GPIOA, GPIO_Pin_5);
+  GPIO_ResetBits(GPIOA, GPIO_Pin_5); // LOW 출력 → 부저 울림
 }
 
-void Buzzer_Off(void) //// HIGH에서 OFF
+// 부저 OFF (GPIO HIGH로 설정)
+void Buzzer_Off(void)
 {
-  GPIO_SetBits(GPIOA, GPIO_Pin_5);
+  GPIO_SetBits(GPIOA, GPIO_Pin_5); // HIGH 출력 → 부저 정지
 }
 
 /*
@@ -555,22 +609,33 @@ void Buzzer_Off(void) //// HIGH에서 OFF
 *********************************************************************************************************
 */
 
-// Read analog value
+// 조이스틱 X축 아날로그 값 읽기 (PA0)
 uint16_t JoyStick_ReadX(void)
 {
+  // ADC 채널 0 (X축) 설정 및 변환 시작
   ADC_RegularChannelConfig(ADC1, ADC_Channel_0, 1, ADC_SampleTime_15Cycles);
   ADC_SoftwareStartConv(ADC1);
+
+  // 변환 완료까지 대기
   while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET)
     ;
+
+  // 변환 결과 반환
   return ADC_GetConversionValue(ADC1);
 }
 
+// 조이스틱 Y축 아날로그 값 읽기 (PA7)
 uint16_t JoyStick_ReadY(void)
 {
+  // ADC 채널 7 (Y축) 설정 및 변환 시작
   ADC_RegularChannelConfig(ADC1, ADC_Channel_7, 1, ADC_SampleTime_15Cycles);
   ADC_SoftwareStartConv(ADC1);
+
+  // 변환 완료까지 대기
   while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET)
     ;
+
+  // 변환 결과 반환
   return ADC_GetConversionValue(ADC1);
 }
 
@@ -580,6 +645,8 @@ uint16_t JoyStick_ReadY(void)
 *********************************************************************************************************
 */
 
+// 버튼 상태 읽기 (PC6)
+// 눌림: 0 (LOW), 안 눌림: 1 (HIGH) - Pull-up 기준
 uint8_t Button_Read(void)
 {
   return GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_6);
@@ -590,8 +657,6 @@ uint8_t Button_Read(void)
 *                                                main
 *********************************************************************************************************
 */
-
-// main()->AppTaskStart()->AppTaskCreate()
 
 int main(void)
 {
@@ -607,7 +672,7 @@ int main(void)
   Mem_Init();
   Math_Init();
 
-  // 현재 시간 설정
+  // 현재 시간 설정 (8시 59분 50초로 세팅)
   RTC_CustomInit();
   RTC_CustomSetTime(8, 59, 50);
 
@@ -617,6 +682,7 @@ int main(void)
   /* OS Init */
   OSInit(&err);
 
+  // AppTaskStart task로 진입
   OSTaskCreate((OS_TCB *)&AppTaskStartTCB,
                (CPU_CHAR *)"App Task Start",
                (OS_TASK_PTR)AppTaskStart,
@@ -631,7 +697,7 @@ int main(void)
                (OS_OPT)(OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR),
                (OS_ERR *)&err);
 
-  OSStart(&err); /* Start multitasking (i.e. give control to uC/OS-III). */
+  OSStart(&err);
 
   (void)&err;
 
@@ -644,38 +710,37 @@ int main(void)
 *********************************************************************************************************
 */
 
+// 시스템 시작 태스크 (초기화 및 RTOS 자원 생성)
 static void AppTaskStart(void *p_arg)
 {
   OS_ERR err;
-
   (void)p_arg;
 
-  // HW INIT
-  BSP_Init();
-  BSP_Tick_Init();
-  Buzzer_Init();
-  TouchSensor_Init();
-  JoyStick_Init();
-  Button_Init();
-  USART_Config();
+  // 1. 하드웨어 초기화
+  BSP_Init();         // 기본 보드 초기화
+  BSP_Tick_Init();    // SysTick 타이머 설정
+  Buzzer_Init();      // 부저 설정
+  TouchSensor_Init(); // 터치 센서 설정
+  JoyStick_Init();    // 조이스틱 설정
+  Button_Init();      // 버튼 설정
+  USART_Config();     // 시리얼 통신 설정
 
-  Buzzer_Off();
+  Buzzer_Off(); // 부저 기본 OFF 상태
 
-  // Alarm Flag create
-  OSFlagCreate(&AlarmFlagGroup, "Alarm Flag Group", (OS_FLAGS)0, &err);
-  // Usart Message Queue create
-  OSQCreate(&USARTMsgQ, "USART Msg Queue", 10, &err);
-  // Sensor Input Queue create
-  OSQCreate(&SensorInputQ, "Sensor Input Queue", 10, &err);
+  // 2. RTOS 통신 자원 생성
+  OSFlagCreate(&AlarmFlagGroup, "Alarm Flag Group", (OS_FLAGS)0, &err); // 플래그 그룹 생성
+  OSQCreate(&USARTMsgQ, "USART Msg Queue", 10, &err);                   // USART 메시지 큐
+  OSQCreate(&SensorInputQ, "Sensor Input Queue", 10, &err);             // 센서 입력 큐
 
 #if OS_CFG_STAT_TASK_EN > 0u
-  OSStatTaskCPUUsageInit(&err);
+  OSStatTaskCPUUsageInit(&err); // CPU 사용률 측정 태스크 시작
 #endif
 
 #ifdef CPU_CFG_INT_DIS_MEAS_EN
-  CPU_IntDisMeasMaxCurReset();
+  CPU_IntDisMeasMaxCurReset(); // 인터럽트 길이 측정용 초기화
 #endif
 
+  // 3. 사용자 태스크 생성
   ApptaskCreate(NULL);
 }
 
@@ -729,6 +794,7 @@ static void ApptaskCreate(void *p_arg)
                OS_OPT_TASK_STK_CHK | OS_OPT_TASK_STK_CLR,
                &err);
 
+  // joystick task create(PRIO 6)
   OSTaskCreate(&TCB_Joystick,
                "Joystick Task",
                JoystickTask,
@@ -789,17 +855,16 @@ static void ApptaskCreate(void *p_arg)
                &err);
 }
 
-// Buzzer Task
+// Buzzer Task - 알람 발생 시 부저를 깜빡이며 울리는 태스크
 static void BuzzerTask(void *p_arg)
 {
   OS_ERR err;
   OS_FLAGS flags;
-
   (void)p_arg;
 
   while (DEF_TRUE)
   {
-    // 1. 알람 발생까지 대기 (알람 ON 신호 올 때까지 무한대기)
+    // 1. 알람 ON 신호가 올 때까지 대기
     flags = OSFlagPend(&AlarmFlagGroup,
                        ALARM_FLAG_BUZZER,
                        0,
@@ -807,6 +872,7 @@ static void BuzzerTask(void *p_arg)
                        0,
                        &err);
 
+    // 시작 직후 알람 OFF 신호가 이미 있는지 체크
     OSFlagPend(&AlarmFlagGroup,
                ALARM_FLAG_OFF,
                0,
@@ -814,21 +880,20 @@ static void BuzzerTask(void *p_arg)
                0,
                &err);
 
-    // 2. 부저 울림 반복 (알람 OFF 신호 올 때까지)
+    // 2. 알람 울림 안내 메시지 전송
     static const char msg_on[] = "\r\n알람이 울리는 중...\r\n터치 센서를 눌러 미션을 수행하세요!\r\n";
     OSQPost(&USARTMsgQ, (void *)msg_on, sizeof(msg_on), OS_OPT_POST_FIFO, &err);
 
+    // 3. 부저 ON/OFF 깜빡임 반복 (알람 해제될 때까지)
     while (DEF_TRUE)
     {
-      // 깜빡임 효과 (비프 ON)
-      Buzzer_On();
-      OSTimeDlyHMSM(0, 0, 0, 500, OS_OPT_TIME_HMSM_STRICT, &err); // 0.3초 ON
+      Buzzer_On(); // 부저 ON
+      OSTimeDlyHMSM(0, 0, 0, 500, OS_OPT_TIME_HMSM_STRICT, &err);
 
-      // 깜빡임 효과 (비프 OFF)
-      Buzzer_Off();
-      OSTimeDlyHMSM(0, 0, 0, 500, OS_OPT_TIME_HMSM_STRICT, &err); // 0.2초 OFF
+      Buzzer_Off(); // 부저 OFF
+      OSTimeDlyHMSM(0, 0, 0, 500, OS_OPT_TIME_HMSM_STRICT, &err);
 
-      // 알람 OFF 신호가 들어왔는지 체크
+      // 알람 OFF 신호가 들어왔는지 확인
       if (OSFlagPend(&AlarmFlagGroup, ALARM_FLAG_OFF, 0,
                      OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
                      0, &err))
@@ -837,14 +902,14 @@ static void BuzzerTask(void *p_arg)
       }
     }
 
-    // 3. 부저 완전히 종료
-    Buzzer_Off();
+    // 4. 알람 종료 처리
+    Buzzer_Off(); // 완전히 OFF
     static const char msg_off[] = "알람이 해제되었습니다!\r\n\r\n";
     OSQPost(&USARTMsgQ, (void *)msg_off, sizeof(msg_off), OS_OPT_POST_FIFO, &err);
   }
 }
 
-// Touch Sensor Task
+// Touch Sensor Task - 터치 입력 감지 및 미션 시작 신호 전송
 static void TouchSensorTask(void *p_arg)
 {
   OS_ERR err;
@@ -855,7 +920,7 @@ static void TouchSensorTask(void *p_arg)
 
   while (DEF_TRUE)
   {
-    // 1. 알람 울림 신호 기다림
+    // 1. 알람 울림 신호 대기 (터치 활성화 시점)
     flags = OSFlagPend(&AlarmFlagGroup,
                        ALARM_FLAG_TOUCH,
                        0,
@@ -863,30 +928,31 @@ static void TouchSensorTask(void *p_arg)
                        0,
                        &err);
 
-    // 2. 터치센서 OFF될 때까지 대기
+    // 2. 터치센서가 손에서 떨어질 때까지 대기 (초기화 목적)
     while (GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3) == Bit_SET)
     {
       OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
     }
     prev = Bit_RESET;
 
-    // 3. 터치 감지(딱 한 번)
+    // 3. 터치 한 번만 감지
     int touched = 0;
     while (!touched)
     {
       curr = GPIO_ReadInputDataBit(GPIOA, GPIO_Pin_3);
-      if (curr == Bit_SET && prev == Bit_RESET)
+      if (curr == Bit_SET && prev == Bit_RESET) // 상승 엣지 감지
       {
+        // 터치 성공 메시지 전송
         static char mission_start[] = "\r\n터치 성공! 미션 시작!\r\n";
         OSQPost(&USARTMsgQ, (void *)mission_start, sizeof(mission_start), OS_OPT_POST_FIFO, &err);
         OSTimeDlyHMSM(0, 0, 0, 500, OS_OPT_TIME_HMSM_STRICT, &err);
 
-        // 터치된 순간의 초를 캡쳐해 랜덤한 인덱스 생성
+        // RTC 시간의 초(second)를 이용해 미션 랜덤 인덱스 생성 (0~2)
         RTC_TimeTypeDef rtc_time;
         RTC_GetTime(RTC_Format_BIN, &rtc_time);
         random_index = rtc_time.RTC_Seconds % 3;
 
-        // MissionTask에 신호
+        // MissionTask 시작 신호 전송
         OSFlagPost(&AlarmFlagGroup,
                    ALARM_FLAG_MISSION,
                    OS_OPT_POST_FLAG_SET,
@@ -898,7 +964,7 @@ static void TouchSensorTask(void *p_arg)
       OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
     }
 
-    // 4. 알람이 해제될 때까지 Block (ALARM_FLAG_OFF 대기)
+    // 4. 알람이 완전히 해제될 때까지 Block
     OSFlagPend(&AlarmFlagGroup,
                ALARM_FLAG_OFF,
                0,
@@ -908,6 +974,7 @@ static void TouchSensorTask(void *p_arg)
   }
 }
 
+// MissionTask - 미션 수행을 담당하는 태스크 (버튼 + 조이스틱)
 static void MissionTask(void *p_arg)
 {
   OS_ERR err;
@@ -920,7 +987,7 @@ static void MissionTask(void *p_arg)
 
   while (DEF_TRUE)
   {
-    // 1. 터치 감지될 때까지 대기 (미션 시작 신호)
+    // 1. 터치 태스크로부터 미션 시작 신호 대기
     flags = OSFlagPend(&AlarmFlagGroup,
                        ALARM_FLAG_MISSION,
                        0,
@@ -928,11 +995,11 @@ static void MissionTask(void *p_arg)
                        0,
                        &err);
 
-    // 2. 랜덤 인덱스 기반 미션 선택
+    // 2. 랜덤 인덱스를 기반으로 버튼/조이스틱 미션 설정
     int required_button = button_missions[random_index];
     int *required_joy = Joystick_missions[random_index];
 
-    // 조이스틱 방향 카운터 초기화
+    // 각 조이스틱 방향 카운터 초기화
     int left = 0, right = 0, up = 0, down = 0;
     for (int i = 0; i < 3; i++)
     {
@@ -946,50 +1013,53 @@ static void MissionTask(void *p_arg)
         down++;
     }
 
-    // 미션 안내 출력
+    // 3. 미션 1 안내 (버튼 누르기)
     char buf[128];
     snprintf(buf, sizeof(buf),
              "[미션 1]: 버튼 %d회를 누르세요!\r\n", required_button);
     OSQPost(&USARTMsgQ, (void *)buf, strlen(buf) + 1, OS_OPT_POST_FIFO, &err);
 
-    // 버튼 태스크 시작 신호
+    // 버튼 태스크 시작 신호 전송
     OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_BUTTON, OS_OPT_POST_FLAG_SET, &err);
 
     int button_cnt = 0;
     int mission1_done = 0;
 
-    // 3. 버튼 미션 수행 루프
+    // 4. 버튼 미션 수행 루프
     while (!mission1_done)
     {
-      // 강제 종료 확인
+      // 알람 강제 종료 체크
       if (OSFlagPend(&AlarmFlagGroup,
                      ALARM_FLAG_OFF,
                      0,
                      OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
-                     0,
-                     &err))
+                     0, &err))
         return;
 
+      // 센서 입력 큐에서 데이터 수신
       msg = OSQPend(&SensorInputQ, 0, OS_OPT_PEND_BLOCKING, &msg_size, 0, &err);
       if (err != OS_ERR_NONE)
         continue;
 
       input = *(SensorInput *)msg;
 
+      // 버튼 입력 감지
       if (input.type == SENSOR_BUTTON)
       {
         button_cnt++;
         if (button_cnt >= required_button)
         {
+          // 미션1 완료
           OSTimeDlyHMSM(0, 0, 0, 300, OS_OPT_TIME_HMSM_STRICT, &err);
           static const char msg[] = "미션 1 성공!\r\n\r\n[미션 2]: ";
           OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
+
           mission1_done = 1;
 
-          // 버튼 태스크에게 알림
+          // 버튼 태스크 종료 신호 전송
           OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_BUTTON_SUCCESS, OS_OPT_POST_FLAG_SET, &err);
 
-          // 조이스틱 미션 안내
+          // 조이스틱 미션 안내 출력
           char joy_msg[128] = {0};
           strcat(joy_msg, "조이스틱을 ");
           for (int i = 0; i < 3; i++)
@@ -1009,24 +1079,25 @@ static void MissionTask(void *p_arg)
       }
     }
 
-    // 4. 조이스틱 미션 수행 루프
+    // 5. 조이스틱 미션 수행 루프
     while (1)
     {
-      // 강제 종료 확인
+      // 알람 강제 종료 체크
       if (OSFlagPend(&AlarmFlagGroup,
                      ALARM_FLAG_OFF,
                      0,
                      OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
-                     0,
-                     &err))
+                     0, &err))
         return;
 
+      // 센서 입력 대기
       msg = OSQPend(&SensorInputQ, 0, OS_OPT_PEND_BLOCKING, &msg_size, 0, &err);
       if (err != OS_ERR_NONE)
         continue;
 
       input = *(SensorInput *)msg;
 
+      // 방향별로 카운터 감소
       if (input.type == SENSOR_JOYSTICK_LEFT && left > 0)
         left--;
       else if (input.type == SENSOR_JOYSTICK_RIGHT && right > 0)
@@ -1036,13 +1107,14 @@ static void MissionTask(void *p_arg)
       else if (input.type == SENSOR_JOYSTICK_DOWN && down > 0)
         down--;
 
+      // 모든 방향 조건 충족 시 미션 성공
       if (left <= 0 && right <= 0 && up <= 0 && down <= 0)
       {
         OSTimeDlyHMSM(0, 0, 0, 300, OS_OPT_TIME_HMSM_STRICT, &err);
         static const char msg[] = "\r\n미션 2 성공! 알람이 해제됩니다.\r\n\r\n";
         OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
 
-        // 최종 알람 해제
+        // 알람 종료
         OSFlagPost(&AlarmFlagGroup, ALARM_FLAG_OFF, OS_OPT_POST_FLAG_SET, &err);
         break;
       }
@@ -1050,7 +1122,7 @@ static void MissionTask(void *p_arg)
   }
 }
 
-// Button Task
+// Button Task - 버튼 입력을 감지하고 미션 시스템에 전달하는 태스크
 static void ButtonTask(void *p_arg)
 {
   OS_ERR err;
@@ -1062,7 +1134,7 @@ static void ButtonTask(void *p_arg)
 
   while (DEF_TRUE)
   {
-    // ALARM_FLAG_BUTTON 받을 때까지 대기
+    // 1. 미션 시작 신호(ALARM_FLAG_BUTTON) 대기
     flags = OSFlagPend(&AlarmFlagGroup,
                        ALARM_FLAG_BUTTON,
                        0,
@@ -1070,10 +1142,12 @@ static void ButtonTask(void *p_arg)
                        0,
                        &err);
 
+    // 2. 버튼 상태 초기화 (직전 상태 저장)
     prev = Button_Read();
+
     while (1)
     {
-      // 미션 성공 시 종료
+      // 3. 미션 성공 신호 받으면 조이스틱 태스크 시작 플래그 전송 후 종료
       if (OSFlagPend(&AlarmFlagGroup,
                      ALARM_FLAG_BUTTON_SUCCESS,
                      0,
@@ -1087,25 +1161,30 @@ static void ButtonTask(void *p_arg)
         break;
       }
 
+      // 4. 버튼 눌림 감지 (하강 엣지: HIGH → LOW)
       curr = Button_Read();
-      if (curr == Bit_RESET && prev == Bit_SET) // 버튼 눌림 (Active Low)
+      if (curr == Bit_RESET && prev == Bit_SET)
       {
+        // 입력 정보 큐로 전송
         input.type = SENSOR_BUTTON;
         OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
 
+        // 로그 메시지 전송
         static const char msg[] = "[버튼] 눌림 감지\r\n";
         OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
 
-        OSTimeDlyHMSM(0, 0, 0, 300, OS_OPT_TIME_HMSM_STRICT, &err); // 디바운싱
+        // 디바운싱 (연속입력 방지)
+        OSTimeDlyHMSM(0, 0, 0, 300, OS_OPT_TIME_HMSM_STRICT, &err);
       }
 
+      // 5. 상태 갱신 및 짧은 딜레이
       prev = curr;
       OSTimeDlyHMSM(0, 0, 0, 20, OS_OPT_TIME_HMSM_STRICT, &err);
     }
   }
 }
 
-// Joystick Task - 센서 방향 감지만 수행 (방향 입력을 SensorInput 구조체로 전송)
+// Joystick Task - 조이스틱 방향 감지 → SensorInput 구조체로 전송
 static void JoystickTask(void *p_arg)
 {
   OS_ERR err;
@@ -1116,7 +1195,7 @@ static void JoystickTask(void *p_arg)
 
   while (DEF_TRUE)
   {
-    // 1. 미션 시작 신호 대기
+    // 1. 조이스틱 미션 시작 신호 대기
     flags = OSFlagPend(&AlarmFlagGroup,
                        ALARM_FLAG_JOYSTICK_START,
                        0,
@@ -1124,7 +1203,7 @@ static void JoystickTask(void *p_arg)
                        0,
                        &err);
 
-    // 2. 조이스틱이 중앙 위치일 때까지 대기 (초기화 목적)
+    // 2. 조이스틱을 중앙에 둘 때까지 대기 (초기화 상태 확보)
     uint16_t joystickX, joystickY;
     do
     {
@@ -1139,56 +1218,63 @@ static void JoystickTask(void *p_arg)
 
     while (DEF_TRUE)
     {
+      // 미션 성공 시 종료
+      if (OSFlagPend(&AlarmFlagGroup,
+                     ALARM_FLAG_OFF,
+                     0,
+                     OS_OPT_PEND_FLAG_SET_ANY | OS_OPT_PEND_NON_BLOCKING,
+                     0, &err))
+      {
+        break;
+      }
+
       joystickX = JoyStick_ReadX();
       joystickY = JoyStick_ReadY();
 
-      // → 오른쪽
+      // → 오른쪽 감지 (X 증가)
       if (joystickX * 7 > 1000 && prevX * 7 <= 1000)
       {
         input.type = SENSOR_JOYSTICK_RIGHT;
         OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
-
         static const char msg[] = "[조이스틱] → 감지\r\n";
         OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
       }
-      // ← 왼쪽
+      // ← 왼쪽 감지 (X 감소)
       else if (joystickX * 7 < 100 && prevX * 7 >= 100)
       {
         input.type = SENSOR_JOYSTICK_LEFT;
         OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
-
         static const char msg[] = "[조이스틱] ← 감지\r\n";
         OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
       }
-      // ↑ 위
+      // ↑ 위쪽 감지 (Y 증가)
       else if (joystickY > 3000 && prevY <= 3000)
       {
         input.type = SENSOR_JOYSTICK_UP;
         OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
-
         static const char msg[] = "[조이스틱] ↑ 감지\r\n";
         OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
       }
-      // ↓ 아래
+      // ↓ 아래 감지 (Y 감소)
       else if (joystickY < 1000 && prevY >= 1000)
       {
         input.type = SENSOR_JOYSTICK_DOWN;
         OSQPost(&SensorInputQ, &input, sizeof(input), OS_OPT_POST_FIFO, &err);
-
         static const char msg[] = "[조이스틱] ↓ 감지\r\n";
         OSQPost(&USARTMsgQ, (void *)msg, sizeof(msg), OS_OPT_POST_FIFO, &err);
       }
 
+      // 이전 값 업데이트
       prevX = joystickX;
       prevY = joystickY;
 
-      // 미션 완료 확인은 MissionTask가 하므로 여기선 무한 반복
+      // 0.1초 대기 후 다음 루프
       OSTimeDlyHMSM(0, 0, 0, 100, OS_OPT_TIME_HMSM_STRICT, &err);
     }
   }
 }
 
-// USART Task
+// USART Task - 메시지 큐에서 문자열을 받아 시리얼 터미널에 출력하는 태스크
 static void USARTTask(void *p_arg)
 {
   OS_ERR err;
@@ -1199,7 +1285,7 @@ static void USARTTask(void *p_arg)
 
   while (DEF_TRUE)
   {
-    // 메시지 큐에서 문자열 수신 (blocking)
+    // 1. 메시지 큐(USARTMsgQ)에서 문자열 수신 (블로킹 대기)
     msg = OSQPend(&USARTMsgQ,
                   0,
                   OS_OPT_PEND_BLOCKING,
@@ -1207,15 +1293,15 @@ static void USARTTask(void *p_arg)
                   0,
                   &err);
 
+    // 2. 수신 성공 시 문자열 출력
     if (err == OS_ERR_NONE && msg != NULL)
     {
-      // 문자열 출력
       USART_SendString((char *)msg);
     }
   }
 }
 
-// Timer Monitor Task
+// Timer Monitor Task - 현재 시간을 확인하고 알람 직전 3초부터 시각 출력
 static void TimeMonitorTask(void *p_arg)
 {
   OS_ERR err;
@@ -1223,15 +1309,16 @@ static void TimeMonitorTask(void *p_arg)
 
   while (DEF_TRUE)
   {
+    // 1. 현재 시간 읽기
     RTC_TimeTypeDef now;
     RTC_GetTime(RTC_Format_BIN, &now);
 
+    // 2. 초 단위로 현재 시각과 알람 시각 계산
     int now_sec = now.RTC_Hours * 3600 + now.RTC_Minutes * 60 + now.RTC_Seconds;
     int alarm_sec = g_alarmTime.RTC_Hours * 3600 + g_alarmTime.RTC_Minutes * 60 + g_alarmTime.RTC_Seconds;
-
     int remaining = alarm_sec - now_sec;
 
-    // 알람 울리기 3초 전에 시간 표시
+    // 3. 알람 울리기 3초 전부터 시리얼 출력
     if (remaining <= 3 && remaining > 0)
     {
       char buf[64];
@@ -1239,6 +1326,7 @@ static void TimeMonitorTask(void *p_arg)
       OSQPost(&USARTMsgQ, (void *)buf, sizeof(buf), OS_OPT_POST_FIFO, &err);
     }
 
-    OSTimeDlyHMSM(0, 0, 1, 0, OS_OPT_TIME_HMSM_STRICT, &err); // 1초 대기
+    // 4. 1초 간격 반복
+    OSTimeDlyHMSM(0, 0, 1, 0, OS_OPT_TIME_HMSM_STRICT, &err);
   }
 }
